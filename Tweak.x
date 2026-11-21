@@ -49,6 +49,17 @@ static void CC9DismissNative(void) {
     } @catch (NSException *e) { NSLog(@"[CCNine] dismiss native: %@", e); }
 }
 
+static NSMutableArray<UIView *> *gHiddenByUs;
+static void CC9HideView(UIView *v) {
+    if (!v || v.hidden) return;
+    if (!gHiddenByUs) gHiddenByUs = [NSMutableArray array];
+    v.hidden = YES; v.userInteractionEnabled = NO; [gHiddenByUs addObject:v];
+}
+static void CC9RestoreNative(void) {   // remet EXACTEMENT ce qu'on a caché : le natif reste utilisable ensuite
+    for (UIView *v in gHiddenByUs) { v.hidden = NO; v.userInteractionEnabled = YES; }
+    [gHiddenByUs removeAllObjects];
+}
+
 static void CC9HideNativeContent(UIViewController *vc) {
     UIView *root = vc.view; UIWindow *w = root.window;
     CC9Log([NSString stringWithFormat:@"native vc=%@ superview=%@ window=%@", NSStringFromClass(vc.class),
@@ -61,7 +72,7 @@ static void CC9HideNativeContent(UIViewController *vc) {
     if (![NSStringFromClass(w.class) containsString:@"ControlCenter"]) return;
     for (UIView *sv in w.subviews) {
         if (sv == root || [NSStringFromClass(sv.class) containsString:@"Status"]) continue;   // la status bar reste visible
-        sv.hidden = YES; sv.userInteractionEnabled = NO;
+        CC9HideView(sv);
     }
 }
 
@@ -170,8 +181,6 @@ static void CC9WriteDump(void) {
 - (void)_showControlCenterGestureCancelledWithGestureRecognizer:(id)gr { CC9Route(3, gr); }
 - (void)presentAnimated:(BOOL)a                                        { [[CC9Controller shared] presentAnimated:a]; }
 - (void)presentAnimated:(BOOL)a completion:(void (^)(void))c           { [[CC9Controller shared] presentAnimated:a]; if (c) c(); }
-- (BOOL)isPresented { return NO; }
-- (BOOL)isVisible   { return NO; }
 %end
 %end
 
@@ -181,13 +190,13 @@ static void CC9WriteDump(void) {
 %hook CCUIModularControlCenterOverlayViewController
 - (void)viewWillAppear:(BOOL)animated {
     %orig;
-    { UIView *nv = [(UIViewController *)self view]; nv.hidden = YES; nv.userInteractionEnabled = NO; }
-    CC9NativeAppeared("overlay.viewWillAppear");
     UIViewController *vc = (UIViewController *)self;
+    CC9HideView(vc.view);
+    CC9NativeAppeared("overlay.viewWillAppear");
     dispatch_async(dispatch_get_main_queue(), ^{ CC9HideNativeContent(vc); });
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 800 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{ CC9RestoreNative(); });  // filet : jamais de masquage permanent
 }
-- (void)viewDidAppear:(BOOL)animated      { %orig; { UIView *nv = [(UIViewController *)self view]; nv.hidden = YES; nv.userInteractionEnabled = NO; } }
-- (void)viewDidLayoutSubviews             { %orig; { UIView *nv = [(UIViewController *)self view]; nv.hidden = YES; nv.userInteractionEnabled = NO; } }
+- (void)viewDidDisappear:(BOOL)animated { %orig; CC9RestoreNative(); }
 %end
 %end
 
