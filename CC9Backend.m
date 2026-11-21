@@ -11,16 +11,31 @@ static id CC9Shared(const char *cls) {
     return (c && [c respondsToSelector:s]) ? ((id (*)(Class, SEL))objc_msgSend)(c, s) : nil;
 }
 
+// Journal : /var/mobile/Documents/CCNine_log.txt (lisible avec Filza)
+static void CC9Log(NSString *m) {
+    NSString *p = @"/var/mobile/Documents/CCNine_log.txt";
+    NSData *d = [[NSString stringWithFormat:@"%@  %@\n", [NSDate date], m] dataUsingEncoding:NSUTF8StringEncoding];
+    NSFileHandle *h = [NSFileHandle fileHandleForWritingAtPath:p];
+    if (!h) { [d writeToFile:p atomically:YES]; return; }
+    if (h.seekToEndOfFile > 200000) { [h truncateFileAtOffset:0]; }
+    [h writeData:d]; [h closeFile];
+}
+
 NSString *const CC9StateChanged = @"CC9StateChanged";
 
 typedef void (*MRGetInfoFn)(dispatch_queue_t, void (^)(CFDictionaryRef));
 typedef Boolean (*MRSendFn)(int, id);
 typedef void (*MRRegisterFn)(dispatch_queue_t);
+typedef float (*BKSGetFn)(void);
+typedef void (*BKSSetFn)(float, int);
+static NSString *const kDNDClient = @"com.apple.donotdisturb.control-center.module";
 
 @implementation CC9Backend {
     RadiosPreferences *_radios;
     CBBlueLightClient *_blue;
     MRGetInfoFn _mrInfo; MRSendFn _mrSend;
+    BKSGetFn _bksGet; BKSSetFn _bksSet;
+    id _dndService; id _dndAssertion;
 }
 
 + (instancetype)shared {
@@ -32,6 +47,9 @@ typedef void (*MRRegisterFn)(dispatch_queue_t);
 - (instancetype)init {
     if ((self = [super init])) {
         dlopen("/System/Library/PrivateFrameworks/BluetoothManager.framework/BluetoothManager", RTLD_LAZY);
+        void *bks = dlopen("/System/Library/PrivateFrameworks/BackBoardServices.framework/BackBoardServices", RTLD_LAZY);
+        if (bks) { _bksGet = (BKSGetFn)dlsym(bks, "BKSDisplayBrightnessGetCurrent"); _bksSet = (BKSSetFn)dlsym(bks, "BKSDisplayBrightnessSet"); }
+        CC9Log([NSString stringWithFormat:@"init: BKSGet=%d BKSSet=%d", _bksGet != NULL, _bksSet != NULL]);
         dlopen("/System/Library/PrivateFrameworks/CoreBrightness.framework/CoreBrightness", RTLD_LAZY);
         dlopen("/System/Library/PrivateFrameworks/AppSupport.framework/AppSupport", RTLD_LAZY);
         void *mr = dlopen("/System/Library/PrivateFrameworks/MediaRemote.framework/MediaRemote", RTLD_LAZY);
@@ -120,23 +138,52 @@ typedef void (*MRRegisterFn)(dispatch_queue_t);
 
 - (void)setDND:(BOOL)on {
     Class sc = objc_getClass("DNDModeAssertionService"), dc = objc_getClass("DNDModeAssertionDetails");
-    if (!sc || !dc) return;
-    id svc = [sc serviceForClientIdentifier:@"com.apple.donotdisturb.control-center.module"];
-    NSError *e = nil;
+    if (!sc || !dc) { CC9Log(@"DND: classes absentes"); return; }
+    if (!_dndService) _dndService = [sc serviceForClientIdentifier:kDNDClient];   // on GARDE le service (et l'assertion)
+    id svc = _dndService; NSError *e = nil;
     if (on) {
         id det = [dc userRequestedAssertionDetailsWithIdentifier:@"com.apple.control-center.manual-toggle"
                                                   modeIdentifier:@"com.apple.donotdisturb.mode.default" lifetime:nil];
-        [svc takeModeAssertionWithDetails:det error:&e];
-    } else {
-        [svc invalidateAllActiveModeAssertionsWithError:&e];
+        _dndAssertion = [svc takeModeAssertionWithDetails:det error:&e];
+        CC9Log([NSString stringWithFormat:@"DND ON  assertion=%@ err=%@", _dndAssertion, e]);
+        return;
     }
-    if (e) NSLog(@"[CCNine] DND: %@", e);
+    // OFF : 3 stratégies enchaînées
+    SEL sInv = NSSelectorFromString(@"invalidateAssertion:error:");
+    SEL sAll = NSSelectorFromString(@"invalidateAllActiveModeAssertionsWithError:");
+    SEL sAct = NSSelectorFromString(@"activeModeAssertionWithError:");
+    if (_dndAssertion && [svc respondsToSelector:sInv]) {                       // 1) notre propre assertion
+        id r = ((id (*)(id, SEL, id, NSError **))objc_msgSend)(svc, sInv, _dndAssertion, &e);
+        CC9Log([NSString stringWithFormat:@"DND OFF 1 invalidateAssertion -> %@ err=%@", r, e]); e = nil;
+    }
+    if ([svc respondsToSelector:sAll]) {                                        // 2) toutes celles de ce client
+        id r = ((id (*)(id, SEL, NSError **))objc_msgSend)(svc, sAll, &e);
+        CC9Log([NSString stringWithFormat:@"DND OFF 2 invalidateAll -> %@ err=%@", r, e]); e = nil;
+    } else CC9Log(@"DND OFF 2 : invalidateAllActiveModeAssertionsWithError: ABSENT");
+    if ([svc respondsToSelector:sAct] && [svc respondsToSelector:sInv]) {       // 3) l'assertion active, quel que soit son auteur
+        id act = ((id (*)(id, SEL, NSError **))objc_msgSend)(svc, sAct, &e); e = nil;
+        if (act) {
+            id r = ((id (*)(id, SEL, id, NSError **))objc_msgSend)(svc, sInv, act, &e);
+            CC9Log([NSString stringWithFormat:@"DND OFF 3 active=%@ -> %@ err=%@", act, r, e]);
+        } else CC9Log(@"DND OFF 3 : aucune assertion active visible");
+    }
+    _dndAssertion = nil;
 }
 
 #pragma mark - Sliders
 
-- (float)brightness { return UIScreen.mainScreen.brightness; }
-- (void)setBrightness:(float)v { UIScreen.mainScreen.brightness = MAX(0.01f, MIN(1.f, v)); }
+- (float)brightness { return _bksGet ? _bksGet() : UIScreen.mainScreen.brightness; }
+- (void)setBrightness:(float)v {
+    v = MAX(0.01f, MIN(1.f, v));
+    if (_bksSet) _bksSet(v, 1);
+    Class bc = objc_getClass("SBBrightnessController");           // 2e voie, au cas où
+    SEL shared = NSSelectorFromString(@"sharedBrightnessController"), setter = NSSelectorFromString(@"setBrightnessLevel:");
+    if (bc && [bc respondsToSelector:shared]) {
+        id inst = ((id (*)(Class, SEL))objc_msgSend)(bc, shared);
+        if ([inst respondsToSelector:setter]) ((void (*)(id, SEL, float))objc_msgSend)(inst, setter, v);
+    }
+    UIScreen.mainScreen.brightness = v;
+}
 
 - (float)volume {
     float v = 0; Class c = objc_getClass("AVSystemController");

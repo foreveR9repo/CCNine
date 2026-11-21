@@ -48,6 +48,17 @@ static void CC9DismissNative(void) {
     } @catch (NSException *e) { NSLog(@"[CCNine] dismiss native: %@", e); }
 }
 
+static void CC9NativeAppeared(void) {
+    static CFAbsoluteTime last = 0;
+    CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+    if (now - last < 0.6) return;
+    last = now;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [[CC9Controller shared] presentAnimated:YES];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 150 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{ CC9DismissNative(); });
+    });
+}
+
 static void CC9Route(int kind, id gr) {
     CC9Controller *c = [CC9Controller shared];
     switch (kind) {
@@ -151,23 +162,24 @@ static void CC9WriteDump(void) {
 %hook CCUIModularControlCenterOverlayViewController
 - (void)viewWillAppear:(BOOL)animated {
     %orig;
-    [(UIViewController *)self view].hidden = YES;
-    dispatch_async(dispatch_get_main_queue(), ^{
-        [[CC9Controller shared] presentAnimated:YES];
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 150 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{ CC9DismissNative(); });
-    });
+    { UIView *nv = [(UIViewController *)self view]; nv.hidden = YES; nv.userInteractionEnabled = NO; }
+    CC9NativeAppeared();
 }
-- (void)viewDidAppear:(BOOL)animated      { %orig; [(UIViewController *)self view].hidden = YES; }
-- (void)viewDidLayoutSubviews             { %orig; [(UIViewController *)self view].hidden = YES; }
+- (void)viewDidAppear:(BOOL)animated      { %orig; { UIView *nv = [(UIViewController *)self view]; nv.hidden = YES; nv.userInteractionEnabled = NO; } }
+- (void)viewDidLayoutSubviews             { %orig; { UIView *nv = [(UIViewController *)self view]; nv.hidden = YES; nv.userInteractionEnabled = NO; } }
 %end
 %end
 
 // ---------- La FENÊTRE du CC natif reste invisible en permanence (c'est elle qu'on voyait derrière) ----------
 %group WindowHooks
 %hook SBControlCenterWindow
-- (void)setHidden:(BOOL)h      { %orig(YES); }
+- (void)setHidden:(BOOL)h      { %orig; if (!h) CC9NativeAppeared(); }
 - (void)setAlpha:(CGFloat)a    { %orig(0.0); }
-- (void)makeKeyAndVisible      { %orig; [(UIWindow *)self setHidden:YES]; [(UIWindow *)self setAlpha:0]; }
+// Fenêtre native = "fantôme" : elle ne capte AUCUN toucher, ils traversent jusqu'à notre CC / l'app dessous
+- (UIView *)hitTest:(CGPoint)p withEvent:(UIEvent *)e        { return nil; }
+- (BOOL)pointInside:(CGPoint)p withEvent:(UIEvent *)e        { return NO; }
+- (void)setUserInteractionEnabled:(BOOL)u                    { %orig(NO); }
+- (void)makeKeyAndVisible      { %orig; [(UIWindow *)self setAlpha:0]; CC9NativeAppeared(); }
 %end
 %end
 
