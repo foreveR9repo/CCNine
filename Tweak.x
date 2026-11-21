@@ -129,6 +129,7 @@ static void CC9WriteDump(void) {
 }
 
 @interface CCUIModularControlCenterOverlayViewController : UIViewController @end
+@interface SBControlCenterWindow : UIWindow @end
 
 // ---------- Hooks connus (iOS 13-15, souvent encore valides) ----------
 %group CCHooks
@@ -156,6 +157,17 @@ static void CC9WriteDump(void) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 150 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{ CC9DismissNative(); });
     });
 }
+- (void)viewDidAppear:(BOOL)animated      { %orig; [(UIViewController *)self view].hidden = YES; }
+- (void)viewDidLayoutSubviews             { %orig; [(UIViewController *)self view].hidden = YES; }
+%end
+%end
+
+// ---------- La FENÊTRE du CC natif reste invisible en permanence (c'est elle qu'on voyait derrière) ----------
+%group WindowHooks
+%hook SBControlCenterWindow
+- (void)setHidden:(BOOL)h      { %orig(YES); }
+- (void)setAlpha:(CGFloat)a    { %orig(0.0); }
+- (void)makeKeyAndVisible      { %orig; [(UIWindow *)self setHidden:YES]; [(UIWindow *)self setAlpha:0]; }
 %end
 %end
 
@@ -182,6 +194,7 @@ static void CC9WriteDump(void) {
         %init(CCHooks);
         CC9HookGestureMethods();
         if (objc_getClass("CCUIModularControlCenterOverlayViewController")) %init(OverlayHooks);
+        if (objc_getClass("SBControlCenterWindow")) %init(WindowHooks);
         if (objc_getClass("SBHomeHardwareButtonActions")) %init(HomeHooks);
 
         // Écrit /var/mobile/Documents/CCNine_dump.txt 20 s après le démarrage (preuve que le tweak est chargé)
