@@ -12,7 +12,7 @@ static id CC9Shared(const char *cls) {
 }
 
 // Journal : /var/mobile/Documents/CCNine_log.txt (lisible avec Filza)
-static void CC9Log(NSString *m) {
+void CC9Log(NSString *m) {
     NSString *p = @"/var/mobile/Documents/CCNine_log.txt";
     NSData *d = [[NSString stringWithFormat:@"%@  %@\n", [NSDate date], m] dataUsingEncoding:NSUTF8StringEncoding];
     NSFileHandle *h = [NSFileHandle fileHandleForWritingAtPath:p];

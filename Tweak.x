@@ -3,6 +3,7 @@
 #import <objc/message.h>
 #import <dlfcn.h>
 #import "CC9ViewController.h"
+#import "CC9Backend.h"
 
 // ---------- Garde-fous anti respring-loop ----------
 // 1) kill-switch : crée ce fichier (Filza) pour désactiver le tweak sans recompiler
@@ -48,11 +49,28 @@ static void CC9DismissNative(void) {
     } @catch (NSException *e) { NSLog(@"[CCNine] dismiss native: %@", e); }
 }
 
-static void CC9NativeAppeared(void) {
+static void CC9HideNativeContent(UIViewController *vc) {
+    UIView *root = vc.view; UIWindow *w = root.window;
+    CC9Log([NSString stringWithFormat:@"native vc=%@ superview=%@ window=%@", NSStringFromClass(vc.class),
+            root.superview ? NSStringFromClass(root.superview.class) : @"nil", w ? NSStringFromClass(w.class) : @"nil"]);
+    if (!w) return;
+    NSMutableString *d = [NSMutableString stringWithFormat:@"native window level=%.0f alpha=%.2f subviews:", w.windowLevel, w.alpha];
+    for (UIView *sv in w.subviews) [d appendFormat:@" [%@ a=%.2f h=%d]", NSStringFromClass(sv.class), sv.alpha, sv.hidden];
+    CC9Log(d);
+    // Sécurité : on ne touche QU'À la fenêtre du Control Center, jamais à une fenêtre partagée de SpringBoard
+    if (![NSStringFromClass(w.class) containsString:@"ControlCenter"]) return;
+    for (UIView *sv in w.subviews) {
+        if (sv == root || [NSStringFromClass(sv.class) containsString:@"Status"]) continue;   // la status bar reste visible
+        sv.hidden = YES; sv.userInteractionEnabled = NO;
+    }
+}
+
+static void CC9NativeAppeared(const char *why) {
     static CFAbsoluteTime last = 0;
     CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
     if (now - last < 0.6) return;
     last = now;
+    CC9Log([NSString stringWithFormat:@"declencheur: %s", why]);
     dispatch_async(dispatch_get_main_queue(), ^{
         [[CC9Controller shared] presentAnimated:YES];
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 150 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{ CC9DismissNative(); });
@@ -60,6 +78,7 @@ static void CC9NativeAppeared(void) {
 }
 
 static void CC9Route(int kind, id gr) {
+    if (kind == 0) CC9Log(@"geste natif intercepte (began)");
     CC9Controller *c = [CC9Controller shared];
     switch (kind) {
         case 0: [c gestureBegan:gr]; break;
@@ -163,23 +182,12 @@ static void CC9WriteDump(void) {
 - (void)viewWillAppear:(BOOL)animated {
     %orig;
     { UIView *nv = [(UIViewController *)self view]; nv.hidden = YES; nv.userInteractionEnabled = NO; }
-    CC9NativeAppeared();
+    CC9NativeAppeared("overlay.viewWillAppear");
+    UIViewController *vc = (UIViewController *)self;
+    dispatch_async(dispatch_get_main_queue(), ^{ CC9HideNativeContent(vc); });
 }
 - (void)viewDidAppear:(BOOL)animated      { %orig; { UIView *nv = [(UIViewController *)self view]; nv.hidden = YES; nv.userInteractionEnabled = NO; } }
 - (void)viewDidLayoutSubviews             { %orig; { UIView *nv = [(UIViewController *)self view]; nv.hidden = YES; nv.userInteractionEnabled = NO; } }
-%end
-%end
-
-// ---------- La FENÊTRE du CC natif reste invisible en permanence (c'est elle qu'on voyait derrière) ----------
-%group WindowHooks
-%hook SBControlCenterWindow
-- (void)setHidden:(BOOL)h      { %orig; if (!h) CC9NativeAppeared(); }
-- (void)setAlpha:(CGFloat)a    { %orig(0.0); }
-// Fenêtre native = "fantôme" : elle ne capte AUCUN toucher, ils traversent jusqu'à notre CC / l'app dessous
-- (UIView *)hitTest:(CGPoint)p withEvent:(UIEvent *)e        { return nil; }
-- (BOOL)pointInside:(CGPoint)p withEvent:(UIEvent *)e        { return NO; }
-- (void)setUserInteractionEnabled:(BOOL)u                    { %orig(NO); }
-- (void)makeKeyAndVisible      { %orig; [(UIWindow *)self setAlpha:0]; CC9NativeAppeared(); }
 %end
 %end
 
@@ -206,11 +214,11 @@ static void CC9WriteDump(void) {
         %init(CCHooks);
         CC9HookGestureMethods();
         if (objc_getClass("CCUIModularControlCenterOverlayViewController")) %init(OverlayHooks);
-        if (objc_getClass("SBControlCenterWindow")) %init(WindowHooks);
         if (objc_getClass("SBHomeHardwareButtonActions")) %init(HomeHooks);
 
         // Écrit /var/mobile/Documents/CCNine_dump.txt 20 s après le démarrage (preuve que le tweak est chargé)
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 20 * NSEC_PER_SEC), dispatch_get_global_queue(0, 0), ^{ CC9WriteDump(); });
+        CC9Log([NSString stringWithFormat:@"charge. hooks gestuels dynamiques: %@", gHooked]);
         NSLog(@"[CCNine] charge");
     }
 }

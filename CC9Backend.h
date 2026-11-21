@@ -1,5 +1,6 @@
 #import <UIKit/UIKit.h>
 extern NSString *const CC9StateChanged;
+void CC9Log(NSString *m);   // journal : /var/mobile/Documents/CCNine_log.txt
 
 typedef NS_ENUM(NSInteger, CC9Toggle) {
     CC9ToggleAirplane = 1, CC9ToggleWiFi, CC9ToggleBluetooth, CC9ToggleDND,

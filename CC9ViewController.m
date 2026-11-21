@@ -259,6 +259,7 @@ static NSString *CC9Status(CC9Toggle t, BOOL on) {
 
 @implementation CC9Controller {
     CC9Window *_window; CC9RootViewController *_vc;
+    NSUInteger _gen;   // change à chaque (ré)ouverture : une ancienne fermeture ne peut plus cacher la fenêtre
 }
 + (instancetype)shared { static CC9Controller *s; static dispatch_once_t o; dispatch_once(&o, ^{ s = [CC9Controller new]; }); return s; }
 
@@ -278,6 +279,7 @@ static NSString *CC9Status(CC9Toggle t, BOOL on) {
     _vc.requestDismiss = ^{ [ws dismissAnimated:YES]; };
     _window.rootViewController = _vc;
     _window.hidden = YES;
+    CC9Log([NSString stringWithFormat:@"fenetre CC9 creee scene=%d level=%.0f", scene != nil, _window.windowLevel]);
 }
 
 static void OnMain(dispatch_block_t b) { if (NSThread.isMainThread) b(); else dispatch_async(dispatch_get_main_queue(), b); }
@@ -288,6 +290,7 @@ static void OnMain(dispatch_block_t b) { if (NSThread.isMainThread) b(); else di
 - (void)gestureBegan:(id)gr {
     OnMain(^{
         @try {
+            self->_gen++; CC9Log(@"gestureBegan");
             [self ensureWindow]; self->_window.hidden = NO;
             [self->_vc.view layoutIfNeeded];
             [self->_vc setVisibleHeight:0]; [self->_vc refresh];
@@ -314,6 +317,7 @@ static void OnMain(dispatch_block_t b) { if (NSThread.isMainThread) b(); else di
 - (void)presentAnimated:(BOOL)animated {
     OnMain(^{
         if (self.isOpen) return;
+        self->_gen++; CC9Log(@"present");
         [self ensureWindow]; self->_window.hidden = NO; [self->_vc.view layoutIfNeeded];
         [self->_vc setVisibleHeight:0]; [self->_vc refresh];
         [self->_vc animateOpen:YES velocity:0 completion:nil];
@@ -322,9 +326,10 @@ static void OnMain(dispatch_block_t b) { if (NSThread.isMainThread) b(); else di
 - (void)dismissAnimated:(BOOL)animated {
     OnMain(^{
         if (!self->_window) return;
+        NSUInteger g = self->_gen;
         [self->_vc animateOpen:NO velocity:0 completion:^(BOOL finished) {
-            // finished=NO : animation interrompue (nouveau geste) => on NE cache PAS la fenêtre
-            if (finished && self->_vc.visibleHeight < 1) self->_window.hidden = YES;   // plus aucune interception tactile
+            // une ouverture plus récente (gen différent) annule le masquage ; sinon on cache TOUJOURS la fenêtre
+            if (g == self->_gen && self->_vc.visibleHeight < 1) self->_window.hidden = YES;   // plus aucune interception tactile
         }];
     });
 }
