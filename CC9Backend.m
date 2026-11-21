@@ -83,7 +83,8 @@ static NSString *const kDNDClient = @"com.apple.donotdisturb.control-center.modu
                 Class c = objc_getClass("DNDStateService"); if (!c) return NO;
                 id svc = [c serviceForClientIdentifier:@"com.example.ccnine"];
                 NSError *e = nil; id st = [svc queryCurrentStateWithError:&e];
-                return st ? [(DNDState *)st isActive] : NO;
+                BOOL active = st ? [(DNDState *)st isActive] : NO;
+                return active || _dndAssertion != nil;   // si la requête échoue, on se fie à NOTRE assertion
             }
             case CC9ToggleFlashlight: {
                 AVCaptureDevice *d = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeVideo];
@@ -152,6 +153,10 @@ static NSString *const kDNDClient = @"com.apple.donotdisturb.control-center.modu
     SEL sInv = NSSelectorFromString(@"invalidateAssertion:error:");
     SEL sAll = NSSelectorFromString(@"invalidateAllActiveModeAssertionsWithError:");
     SEL sAct = NSSelectorFromString(@"activeModeAssertionWithError:");
+    { unsigned n = 0; Method *ms = class_copyMethodList(object_getClass(svc), &n); NSMutableArray *names = [NSMutableArray array];
+      for (unsigned i = 0; i < n; i++) { NSString *nm = NSStringFromSelector(method_getName(ms[i]));
+          if ([nm.lowercaseString containsString:@"invalidate"] || [nm containsString:@"ssertion"]) [names addObject:nm]; }
+      free(ms); CC9Log([NSString stringWithFormat:@"DND methodes du service: %@", names]); }
     if (_dndAssertion && [svc respondsToSelector:sInv]) {                       // 1) notre propre assertion
         id r = ((id (*)(id, SEL, id, NSError **))objc_msgSend)(svc, sInv, _dndAssertion, &e);
         CC9Log([NSString stringWithFormat:@"DND OFF 1 invalidateAssertion -> %@ err=%@", r, e]); e = nil;
@@ -166,6 +171,14 @@ static NSString *const kDNDClient = @"com.apple.donotdisturb.control-center.modu
             id r = ((id (*)(id, SEL, id, NSError **))objc_msgSend)(svc, sInv, act, &e);
             CC9Log([NSString stringWithFormat:@"DND OFF 3 active=%@ -> %@ err=%@", act, r, e]);
         } else CC9Log(@"DND OFF 3 : aucune assertion active visible");
+    }
+    SEL sUUID = NSSelectorFromString(@"invalidateAssertionWithUUID:error:");            // 4) par UUID
+    if (_dndAssertion && [svc respondsToSelector:sUUID]) {
+        @try {
+            id uuid = [_dndAssertion valueForKey:@"UUID"];
+            id r = ((id (*)(id, SEL, id, NSError **))objc_msgSend)(svc, sUUID, uuid, &e);
+            CC9Log([NSString stringWithFormat:@"DND OFF 4 invalidateAssertionWithUUID -> %@ err=%@", r, e]); e = nil;
+        } @catch (NSException *x) { CC9Log([NSString stringWithFormat:@"DND OFF 4 exception %@", x]); }
     }
     _dndAssertion = nil;
 }

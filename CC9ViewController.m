@@ -84,7 +84,7 @@ static NSString *CC9Status(CC9Toggle t, BOOL on) {
     [_panel addGestureRecognizer:pan];
 
     // Bandes sombres (luminosité / AirDrop), cf. captures
-    for (NSValue *v in @[[NSValue valueWithCGRect:CGRectMake(0, 80, W, 42)], [NSValue valueWithCGRect:CGRectMake(0, 256, W, 42)]]) {
+    for (NSValue *v in @[[NSValue valueWithCGRect:CGRectMake(0, 80, W, 42)], [NSValue valueWithCGRect:CGRectMake(0, 250, W, 52)]]) {
         UIView *b = [[UIView alloc] initWithFrame:v.CGRectValue];
         b.backgroundColor = [UIColor colorWithWhite:0 alpha:0.10]; [_content addSubview:b];
     }
@@ -138,13 +138,20 @@ static NSString *CC9Status(CC9Toggle t, BOOL on) {
     [_vol addTarget:self action:@selector(volChanged:) forControlEvents:UIControlEventValueChanged];
     [_content addSubview:_vol];
 
-    // Ligne AirDrop (non fonctionnelle : voir notes)
-    UIButton *ad = [UIButton buttonWithType:UIButtonTypeSystem];
-    ad.frame = CGRectMake(0, 256, W, 42);
-    [ad setImage:CC9Icon(@"dot.radiowaves.left.and.right", 17) forState:UIControlStateNormal];
-    [ad setTitle:@"  AirDrop" forState:UIControlStateNormal];
-    ad.titleLabel.font = [UIFont systemFontOfSize:17]; ad.tintColor = [UIColor colorWithRed:.05 green:.08 blue:.22 alpha:.8];
-    [_content addSubview:ad];
+    // Ligne AirDrop | AirPlay : deux moitiés séparées par un filet (capture 2), bande plus haute (52 pt)
+    UIColor *adTint = [UIColor colorWithRed:.05 green:.08 blue:.22 alpha:.8];
+    NSArray *halves = @[@[@"dot.radiowaves.left.and.right", @"  AirDrop"], @[@"airplay", @"  AirPlay"]];
+    for (int i = 0; i < 2; i++) {
+        NSArray *hd = halves[i];
+        UIButton *hb = [UIButton buttonWithType:UIButtonTypeSystem];
+        hb.frame = CGRectMake(i * W / 2, 250, W / 2, 52);
+        [hb setImage:CC9Icon((NSString *)hd[0], 17) forState:UIControlStateNormal];
+        [hb setTitle:(NSString *)hd[1] forState:UIControlStateNormal];
+        hb.titleLabel.font = [UIFont systemFontOfSize:17]; hb.tintColor = adTint;
+        [_content addSubview:hb];
+    }
+    UIView *sep = [[UIView alloc] initWithFrame:CGRectMake(W / 2 - 0.25, 250, 0.5, 52)];
+    sep.backgroundColor = [UIColor colorWithWhite:1 alpha:0.3]; [_content addSubview:sep];
 
     // Raccourcis du bas (4 en iOS 9.0-9.2, 5 avec Night Shift en 9.3)
     _shortcuts = [NSMutableArray new];
@@ -335,6 +342,14 @@ static NSString *CC9Time(NSTimeInterval s) { int v = MAX(0, (int)s); return [NSS
 
 static void OnMain(dispatch_block_t b) { if (NSThread.isMainThread) b(); else dispatch_async(dispatch_get_main_queue(), b); }
 
+- (void)prewarm {   // construit la fenêtre (cachée) à l'avance : la 1re ouverture n'a plus de latence
+    OnMain(^{
+        if (self->_window) return;
+        [self ensureWindow]; [self->_vc loadViewIfNeeded]; [self->_vc.view layoutIfNeeded];
+        CC9Log(@"prewarm ok");
+    });
+}
+
 - (CGFloat)yOf:(id)gr { return [gr respondsToSelector:@selector(locationInView:)] ? [(UIGestureRecognizer *)gr locationInView:nil].y : -1; }
 - (CGFloat)vyOf:(id)gr { return [gr respondsToSelector:@selector(velocityInView:)] ? [(UIPanGestureRecognizer *)gr velocityInView:nil].y : 0; }
 
@@ -382,8 +397,6 @@ static void OnMain(dispatch_block_t b) { if (NSThread.isMainThread) b(); else di
             // une ouverture plus récente (gen différent) annule le masquage ; sinon on cache TOUJOURS la fenêtre
             if (g == self->_gen && self->_vc.visibleHeight < 1) {
                 self->_window.hidden = YES;
-                self->_window.rootViewController = nil;
-                self->_window = nil; self->_vc = nil;
             }   // plus aucune interception tactile
         }];
     });

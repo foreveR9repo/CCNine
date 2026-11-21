@@ -15,6 +15,23 @@ static UIImage *CC9Bluetooth(CGFloat pt) {
     }] imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
 }
 
+// Icône AirPlay (écran + triangle), comme iOS 9
+static UIImage *CC9AirPlay(CGFloat pt) {
+    CGFloat k = pt / 17.0; CGSize cs = CGSizeMake(24 * k, 20 * k);
+    UIGraphicsImageRenderer *r = [[UIGraphicsImageRenderer alloc] initWithSize:cs];
+    UIImage *img = [r imageWithActions:^(UIGraphicsImageRendererContext *ctx) {
+        CGContextScaleCTM(ctx.CGContext, k, k);
+        UIBezierPath *f = [UIBezierPath bezierPath];
+        [f moveToPoint:CGPointMake(6.5, 14)]; [f addLineToPoint:CGPointMake(2, 14)]; [f addLineToPoint:CGPointMake(2, 2)];
+        [f addLineToPoint:CGPointMake(22, 2)]; [f addLineToPoint:CGPointMake(22, 14)]; [f addLineToPoint:CGPointMake(17.5, 14)];
+        f.lineWidth = 1.6; f.lineJoinStyle = kCGLineJoinMiter; [UIColor.blackColor setStroke]; [f stroke];
+        UIBezierPath *t = [UIBezierPath bezierPath];
+        [t moveToPoint:CGPointMake(12, 10)]; [t addLineToPoint:CGPointMake(6, 18.5)]; [t addLineToPoint:CGPointMake(18, 18.5)]; [t closePath];
+        [UIColor.blackColor setFill]; [t fill];
+    }];
+    return [img imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
+}
+
 // Symboles de lecture à angles vifs, comme iOS 9 (les SF Symbols ont les coins arrondis)
 static UIImage *CC9SharpGlyph(NSString *name, CGFloat pt) {
     CGFloat h = pt * 0.9;                                   // hauteur du symbole (≈ 20 pt pour pt=22)
@@ -60,6 +77,7 @@ UIImage *CC9Icon(NSString *name, CGFloat pt) {
         if (img) return [img imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
     }
     if ([name isEqualToString:@"bluetooth"]) return CC9Bluetooth(pt);
+    if ([name isEqualToString:@"airplay"]) return CC9AirPlay(pt);
     if ([name isEqualToString:@"play.fill"] || [name isEqualToString:@"pause.fill"] ||
         [name isEqualToString:@"backward.fill"] || [name isEqualToString:@"forward.fill"]) return CC9SharpGlyph(name, pt);
     UIImageSymbolConfiguration *cfg = [UIImageSymbolConfiguration configurationWithPointSize:pt weight:UIImageSymbolWeightSemibold];

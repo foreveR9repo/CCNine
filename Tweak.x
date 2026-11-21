@@ -50,6 +50,7 @@ static void CC9DismissNative(void) {
 }
 
 static NSMutableArray<UIView *> *gHiddenByUs;
+static BOOL gNativeSuppress, gLoggedTree;
 static void CC9HideView(UIView *v) {
     if (!v || v.hidden) return;
     if (!gHiddenByUs) gHiddenByUs = [NSMutableArray array];
@@ -58,16 +59,18 @@ static void CC9HideView(UIView *v) {
 static void CC9RestoreNative(void) {   // remet EXACTEMENT ce qu'on a caché : le natif reste utilisable ensuite
     for (UIView *v in gHiddenByUs) { v.hidden = NO; v.userInteractionEnabled = YES; }
     [gHiddenByUs removeAllObjects];
+    gNativeSuppress = NO; gLoggedTree = NO;
 }
 
 static void CC9HideNativeContent(UIViewController *vc) {
     UIView *root = vc.view; UIWindow *w = root.window;
-    CC9Log([NSString stringWithFormat:@"native vc=%@ superview=%@ window=%@", NSStringFromClass(vc.class),
+    BOOL doLog = !gLoggedTree; gLoggedTree = YES;
+    if (doLog) CC9Log([NSString stringWithFormat:@"native vc=%@ superview=%@ window=%@", NSStringFromClass(vc.class),
             root.superview ? NSStringFromClass(root.superview.class) : @"nil", w ? NSStringFromClass(w.class) : @"nil"]);
     if (!w) return;
     NSMutableString *d = [NSMutableString stringWithFormat:@"native window level=%.0f alpha=%.2f subviews:", w.windowLevel, w.alpha];
     for (UIView *sv in w.subviews) [d appendFormat:@" [%@ a=%.2f h=%d]", NSStringFromClass(sv.class), sv.alpha, sv.hidden];
-    CC9Log(d);
+    if (doLog) CC9Log(d);
     // Sécurité : on ne touche QU'À la fenêtre du Control Center, jamais à une fenêtre partagée de SpringBoard
     if (![NSStringFromClass(w.class) containsString:@"ControlCenter"]) return;
     for (UIView *sv in w.subviews) {
@@ -82,10 +85,11 @@ static void CC9NativeAppeared(const char *why) {
     if (now - last < 0.6) return;
     last = now;
     CC9Log([NSString stringWithFormat:@"declencheur: %s", why]);
-    dispatch_async(dispatch_get_main_queue(), ^{
+    dispatch_block_t go = ^{   // immédiat si on est déjà sur le thread principal (moins de délai = moins de flash)
         [[CC9Controller shared] presentAnimated:YES];
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 150 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{ CC9DismissNative(); });
-    });
+    };
+    if (NSThread.isMainThread) go(); else dispatch_async(dispatch_get_main_queue(), go);
 }
 
 static void CC9Route(int kind, id gr) {
@@ -191,12 +195,18 @@ static void CC9WriteDump(void) {
 - (void)viewWillAppear:(BOOL)animated {
     %orig;
     UIViewController *vc = (UIViewController *)self;
+    gNativeSuppress = YES;
     CC9HideView(vc.view);
+    CC9HideNativeContent(vc);                      // SYNCHRONE : le natif n'a jamais une image à l'écran
     CC9NativeAppeared("overlay.viewWillAppear");
     dispatch_async(dispatch_get_main_queue(), ^{ CC9HideNativeContent(vc); });
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 800 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{ CC9RestoreNative(); });  // filet : jamais de masquage permanent
 }
 - (void)viewDidDisappear:(BOOL)animated { %orig; CC9RestoreNative(); }
+- (void)viewDidLayoutSubviews {                 // éléments ajoutés tardivement par le natif pendant sa présentation
+    %orig;
+    if (gNativeSuppress) { UIViewController *vc = (UIViewController *)self; CC9HideView(vc.view); CC9HideNativeContent(vc); }
+}
 %end
 %end
 
@@ -225,6 +235,7 @@ static void CC9WriteDump(void) {
         if (objc_getClass("CCUIModularControlCenterOverlayViewController")) %init(OverlayHooks);
         if (objc_getClass("SBHomeHardwareButtonActions")) %init(HomeHooks);
 
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 8 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{ [[CC9Controller shared] prewarm]; });
         // Écrit /var/mobile/Documents/CCNine_dump.txt 20 s après le démarrage (preuve que le tweak est chargé)
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 20 * NSEC_PER_SEC), dispatch_get_global_queue(0, 0), ^{ CC9WriteDump(); });
         CC9Log([NSString stringWithFormat:@"charge. hooks gestuels dynamiques: %@", gHooked]);

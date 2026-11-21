@@ -8,6 +8,7 @@
 - (void)gestureChanged:(id)gr;
 - (void)gestureEnded:(id)gr;
 - (void)gestureCancelled:(id)gr;
+- (void)prewarm;
 - (void)presentAnimated:(BOOL)animated;
 - (void)dismissAnimated:(BOOL)animated;
 @end
