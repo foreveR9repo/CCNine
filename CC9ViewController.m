@@ -149,9 +149,10 @@ static NSString *CC9Status(CC9Toggle t, BOOL on) {
     NSMutableArray *use = [sc mutableCopy]; if (!nightShift) [use removeObjectAtIndex:2];
     NSUInteger n = use.count; CGFloat sz = (n == 4) ? 54 : 48, mm = 29;
     for (NSUInteger i = 0; i < n; i++) {
-        CC9RoundButton *b = [[CC9RoundButton alloc] initWithSize:sz radius:13 icon:CC9Icon(use[i][0], 21)];
+        NSArray *row = use[i];
+        CC9RoundButton *b = [[CC9RoundButton alloc] initWithSize:sz radius:13 icon:CC9Icon((NSString *)row[0], 21)];
         b.center = CGPointMake(mm + sz/2 + (W - 2*mm - sz)/(n - 1) * i, 340);
-        id key = use[i][1];
+        id key = row[1];
         b.tag = [key isKindOfClass:NSNumber.class] ? [key integerValue] : 0;
         if (![key isKindOfClass:NSNumber.class]) objc_setAssociatedObject(b, &kBidKey, key, OBJC_ASSOCIATION_COPY_NONATOMIC);
         [b addTarget:self action:@selector(shortcutTapped:) forControlEvents:UIControlEventTouchUpInside];

@@ -3,6 +3,13 @@
 #import <AVFoundation/AVFoundation.h>
 #import <dlfcn.h>
 #import <objc/runtime.h>
+#import <objc/message.h>
+
+// Récupère [Classe sharedInstance] sans lier la classe privée et sans ambiguïté de sélecteur
+static id CC9Shared(const char *cls) {
+    Class c = objc_getClass(cls); SEL s = @selector(sharedInstance);
+    return (c && [c respondsToSelector:s]) ? ((id (*)(Class, SEL))objc_msgSend)(c, s) : nil;
+}
 
 NSString *const CC9StateChanged = @"CC9StateChanged";
 
@@ -51,14 +58,14 @@ typedef void (*MRRegisterFn)(dispatch_queue_t);
     @try {
         switch (t) {
             case CC9ToggleAirplane: return [self radios] ? [[self radios] airplaneMode] : NO;
-            case CC9ToggleWiFi: { Class c = objc_getClass("SBWiFiManager"); return c ? [[c sharedInstance] wiFiEnabled] : NO; }
-            case CC9ToggleBluetooth: { Class c = objc_getClass("BluetoothManager"); return c ? [[c sharedInstance] powered] : NO; }
-            case CC9ToggleRotation: { Class c = objc_getClass("SBOrientationLockManager"); return c ? [[c sharedInstance] isUserLocked] : NO; }
+            case CC9ToggleWiFi: { SBWiFiManager *m = CC9Shared("SBWiFiManager"); return m ? [m wiFiEnabled] : NO; }
+            case CC9ToggleBluetooth: { BluetoothManager *m = CC9Shared("BluetoothManager"); return m ? [m powered] : NO; }
+            case CC9ToggleRotation: { SBOrientationLockManager *m = CC9Shared("SBOrientationLockManager"); return m ? [m isUserLocked] : NO; }
             case CC9ToggleDND: {
                 Class c = objc_getClass("DNDStateService"); if (!c) return NO;
                 id svc = [c serviceForClientIdentifier:@"com.example.ccnine"];
                 NSError *e = nil; id st = [svc queryCurrentStateWithError:&e];
-                return st ? [st isActive] : NO;
+                return st ? [(DNDState *)st isActive] : NO;
             }
             case CC9ToggleFlashlight: {
                 AVCaptureDevice *d = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeVideo];
@@ -85,13 +92,13 @@ typedef void (*MRRegisterFn)(dispatch_queue_t);
     @try {
         switch (t) {
             case CC9ToggleAirplane: [[self radios] setAirplaneMode:on]; [[self radios] synchronize]; break;
-            case CC9ToggleWiFi: [[objc_getClass("SBWiFiManager") sharedInstance] setWiFiEnabled:on]; break;
+            case CC9ToggleWiFi: [(SBWiFiManager *)CC9Shared("SBWiFiManager") setWiFiEnabled:on]; break;
             case CC9ToggleBluetooth: {
-                id bt = [objc_getClass("BluetoothManager") sharedInstance];
+                BluetoothManager *bt = CC9Shared("BluetoothManager");
                 [bt setEnabled:on]; [bt setPowered:on]; break;
             }
             case CC9ToggleRotation: {
-                id m = [objc_getClass("SBOrientationLockManager") sharedInstance];
+                SBOrientationLockManager *m = CC9Shared("SBOrientationLockManager");
                 on ? [m lock] : [m unlock]; break;
             }
             case CC9ToggleDND: [self setDND:on]; break;
