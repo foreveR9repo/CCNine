@@ -199,13 +199,17 @@ static NSString *const kDNDClient = @"com.apple.donotdisturb.control-center.modu
 
 - (void)sendMediaCommand:(int)cmd { if (_mrSend) _mrSend(cmd, nil); }
 
-- (void)fetchNowPlaying:(void (^)(NSString *, NSString *, BOOL))cb {
-    if (!_mrInfo) { cb(nil, nil, NO); return; }
+- (void)fetchNowPlaying:(void (^)(NSString *, NSString *, BOOL, NSTimeInterval, NSTimeInterval))cb {
+    if (!_mrInfo) { cb(nil, nil, NO, 0, 0); return; }
     _mrInfo(dispatch_get_main_queue(), ^(CFDictionaryRef info) {
         NSDictionary *d = (__bridge NSDictionary *)info;
-        NSString *t = d[@"kMRMediaRemoteNowPlayingInfoTitle"], *a = d[@"kMRMediaRemoteNowPlayingInfoArtist"];
+        id t = d[@"kMRMediaRemoteNowPlayingInfoTitle"], a = d[@"kMRMediaRemoteNowPlayingInfoArtist"];
         float rate = [d[@"kMRMediaRemoteNowPlayingInfoPlaybackRate"] floatValue];
-        cb(t, a, rate > 0);
+        NSTimeInterval el = [d[@"kMRMediaRemoteNowPlayingInfoElapsedTime"] doubleValue];
+        NSTimeInterval du = [d[@"kMRMediaRemoteNowPlayingInfoDuration"] doubleValue];
+        id ts = d[@"kMRMediaRemoteNowPlayingInfoTimestamp"];
+        if (rate > 0 && [ts isKindOfClass:NSDate.class]) el += [[NSDate date] timeIntervalSinceDate:ts] * rate;
+        cb([t isKindOfClass:NSString.class] ? t : nil, [a isKindOfClass:NSString.class] ? a : nil, rate > 0, el, du);
     });
 }
 

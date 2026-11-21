@@ -15,6 +15,31 @@ static UIImage *CC9Bluetooth(CGFloat pt) {
     }] imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
 }
 
+// Symboles de lecture à angles vifs, comme iOS 9 (les SF Symbols ont les coins arrondis)
+static UIImage *CC9SharpGlyph(NSString *name, CGFloat pt) {
+    CGFloat h = pt * 0.9;                                   // hauteur du symbole (≈ 20 pt pour pt=22)
+    CGSize cs = CGSizeMake(pt * 1.4, pt * 1.2);
+    UIGraphicsImageRenderer *r = [[UIGraphicsImageRenderer alloc] initWithSize:cs];
+    UIImage *img = [r imageWithActions:^(UIGraphicsImageRendererContext *ctx) {
+        CGFloat cx = cs.width / 2, cy = cs.height / 2; UIBezierPath *p = [UIBezierPath bezierPath];
+        void (^tri)(CGFloat, CGFloat, BOOL) = ^(CGFloat x, CGFloat w, BOOL right) {   // x = bord gauche, w = largeur
+            if (right) { [p moveToPoint:CGPointMake(x, cy - h/2)]; [p addLineToPoint:CGPointMake(x + w, cy)]; [p addLineToPoint:CGPointMake(x, cy + h/2)]; }
+            else       { [p moveToPoint:CGPointMake(x + w, cy - h/2)]; [p addLineToPoint:CGPointMake(x, cy)]; [p addLineToPoint:CGPointMake(x + w, cy + h/2)]; }
+            [p closePath];
+        };
+        if ([name isEqualToString:@"play.fill"]) { CGFloat w = h * 0.86; tri(cx - w/2 + 1, w, YES); }
+        else if ([name isEqualToString:@"pause.fill"]) {
+            CGFloat bw = h * 0.28, gap = h * 0.30;
+            [p appendPath:[UIBezierPath bezierPathWithRect:CGRectMake(cx - gap/2 - bw, cy - h/2, bw, h)]];
+            [p appendPath:[UIBezierPath bezierPathWithRect:CGRectMake(cx + gap/2, cy - h/2, bw, h)]];
+        }
+        else { CGFloat tw = h * 0.68; BOOL fwd = [name isEqualToString:@"forward.fill"];
+            tri(cx - tw, tw, fwd); tri(cx, tw, fwd); }
+        [UIColor.blackColor setFill]; [p fill];
+    }];
+    return [img imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
+}
+
 UIImage *CC9Icon(NSString *name, CGFloat pt) {
     static NSString *dir; static dispatch_once_t o;
     dispatch_once(&o, ^{
@@ -35,6 +60,8 @@ UIImage *CC9Icon(NSString *name, CGFloat pt) {
         if (img) return [img imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
     }
     if ([name isEqualToString:@"bluetooth"]) return CC9Bluetooth(pt);
+    if ([name isEqualToString:@"play.fill"] || [name isEqualToString:@"pause.fill"] ||
+        [name isEqualToString:@"backward.fill"] || [name isEqualToString:@"forward.fill"]) return CC9SharpGlyph(name, pt);
     UIImageSymbolConfiguration *cfg = [UIImageSymbolConfiguration configurationWithPointSize:pt weight:UIImageSymbolWeightSemibold];
     UIImage *img = [UIImage systemImageNamed:name withConfiguration:cfg];
     return [img imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];

@@ -38,7 +38,9 @@ static NSString *CC9Status(CC9Toggle t, BOOL on) {
     UILabel *_status, *_title, *_artist; UIImageView *_grabber;
     NSMutableArray<CC9RoundButton *> *_toggles, *_shortcuts;
     CC9Slider *_bright, *_vol; UIButton *_prev, *_play, *_next;
-    BOOL _playing;
+    BOOL _playing, _hasTrack;
+    UILabel *_elapsed, *_remaining; UIView *_track, *_tick; UIButton *_heart, *_share;
+    NSTimeInterval _baseElapsed, _duration; CFAbsoluteTime _baseTime; NSTimer *_progressTimer;
 }
 
 - (BOOL)prefersStatusBarHidden { return NO; }
@@ -114,16 +116,20 @@ static NSString *CC9Status(CC9Toggle t, BOOL on) {
     [_bright addTarget:self action:@selector(brightChanged:) forControlEvents:UIControlEventValueChanged];
     [_content addSubview:_bright];
 
-    // Média
-    _title = [[UILabel alloc] initWithFrame:CGRectMake(40, 126, W - 80, 24)];
-    _title.textAlignment = NSTextAlignmentCenter; _title.textColor = UIColor.whiteColor; _title.font = [UIFont systemFontOfSize:20];
-    _artist = [[UILabel alloc] initWithFrame:CGRectMake(40, 150, W - 80, 18)];
-    _artist.textAlignment = NSTextAlignmentCenter; _artist.textColor = [UIColor colorWithRed:.05 green:.08 blue:.22 alpha:.85];
-    _artist.font = [UIFont systemFontOfSize:14];
-    [_content addSubview:_title]; [_content addSubview:_artist];
-    _prev = [self mediaButton:@"backward.fill" x:W*0.32 action:@selector(prevTapped)];
-    _play = [self mediaButton:@"play.fill" x:W*0.50 action:@selector(playTapped)];
-    _next = [self mediaButton:@"forward.fill" x:W*0.68 action:@selector(nextTapped)];
+    // Média — tailles mesurées sur tes captures : titre 15 pt, artiste 11 pt, symboles de lecture 22 pt
+    UIColor *navy = [UIColor colorWithRed:.05 green:.08 blue:.22 alpha:.85];
+    _title = [self labelSize:15 color:UIColor.whiteColor];
+    _artist = [self labelSize:11 color:navy];
+    _elapsed = [self labelSize:11 color:navy]; _elapsed.textAlignment = NSTextAlignmentLeft;
+    _remaining = [self labelSize:11 color:navy]; _remaining.textAlignment = NSTextAlignmentRight;
+    _track = [UIView new]; _track.backgroundColor = [UIColor colorWithRed:.05 green:.08 blue:.22 alpha:.8]; [_content addSubview:_track];
+    _tick = [UIView new]; _tick.backgroundColor = UIColor.whiteColor; [_content addSubview:_tick];
+    _prev = [self mediaButton:@"backward.fill" size:22 action:@selector(prevTapped)];
+    _play = [self mediaButton:@"play.fill" size:22 action:@selector(playTapped)];
+    _next = [self mediaButton:@"forward.fill" size:22 action:@selector(nextTapped)];
+    _heart = [self mediaButton:@"heart" size:17 action:@selector(heartTapped)];
+    [_heart setImage:CC9Icon(@"heart.fill", 17) forState:UIControlStateSelected];
+    _share = [self mediaButton:@"square.and.arrow.up" size:17 action:@selector(noop)];
 
     // Volume
     [self addIcon:@"speaker.fill" size:13 at:CGPointMake(28, 231)];
@@ -158,18 +164,56 @@ static NSString *CC9Status(CC9Toggle t, BOOL on) {
         [b addTarget:self action:@selector(shortcutTapped:) forControlEvents:UIControlEventTouchUpInside];
         [_content addSubview:b]; [_shortcuts addObject:b];
     }
+    [self layoutMedia];
 }
 
 - (void)addIcon:(NSString *)n size:(CGFloat)s at:(CGPoint)c {
     UIImageView *v = [[UIImageView alloc] initWithImage:CC9Icon(n, s)];
     v.tintColor = [UIColor colorWithRed:.05 green:.08 blue:.22 alpha:.85]; v.center = c; [_content addSubview:v];
 }
-- (UIButton *)mediaButton:(NSString *)n x:(CGFloat)x action:(SEL)a {
-    UIButton *b = [UIButton buttonWithType:UIButtonTypeCustom]; b.frame = CGRectMake(0, 0, 56, 44);
-    b.center = CGPointMake(x, 192); [b setImage:CC9Icon(n, 30) forState:UIControlStateNormal];
+- (UIButton *)mediaButton:(NSString *)n size:(CGFloat)pt action:(SEL)a {
+    UIButton *b = [UIButton buttonWithType:UIButtonTypeCustom]; b.frame = CGRectMake(0, 0, 56, 36);
+    [b setImage:CC9Icon(n, pt) forState:UIControlStateNormal];
+    b.imageView.contentMode = UIViewContentModeCenter;
     b.tintColor = [UIColor colorWithRed:.03 green:.04 blue:.12 alpha:1];
     [b addTarget:self action:a forControlEvents:UIControlEventTouchUpInside]; [_content addSubview:b]; return b;
 }
+- (UILabel *)labelSize:(CGFloat)pt color:(UIColor *)c {
+    UILabel *l = [UILabel new]; l.font = [UIFont systemFontOfSize:pt]; l.textColor = c; l.textAlignment = NSTextAlignmentCenter;
+    l.numberOfLines = 1; l.adjustsFontSizeToFitWidth = YES; l.minimumScaleFactor = 0.7; l.adjustsFontForContentSizeCategory = NO;
+    [_content addSubview:l]; return l;
+}
+
+// Deux états, d'après tes captures :
+//  sans morceau  (capture 1/3) : contrôles à y=188, espacement .318/.5/.672
+//  avec morceau  (capture 2)   : scrubber 143, titre 162, artiste 181, contrôles 207 (+ ♡ et partager), espacement .285/.5/.706
+- (void)layoutMedia {
+    CGFloat W = UIScreen.mainScreen.bounds.size.width; BOOL t = _hasTrack;
+    for (UIView *v in @[_title, _artist, _elapsed, _remaining, _track, _tick, _heart, _share]) { v.transform = CGAffineTransformIdentity; v.hidden = !t; }
+    CGFloat cy = t ? 207 : 188, lx = t ? 0.285 : 0.318, rx = t ? 0.706 : 0.672;
+    for (UIButton *b in @[_prev, _play, _next, _heart, _share]) { b.transform = CGAffineTransformIdentity; b.bounds = CGRectMake(0, 0, 56, 36); }
+    _prev.center = CGPointMake(W * lx, cy); _play.center = CGPointMake(W * 0.5, cy); _next.center = CGPointMake(W * rx, cy);
+    if (!t) return;
+    _elapsed.frame = CGRectMake(25, 135, 44, 16);
+    _remaining.frame = CGRectMake(W - 30 - 54, 135, 54, 16);
+    _track.frame = CGRectMake(60, 142, W - 123, 2);
+    _title.frame = CGRectMake(40, 152, W - 80, 20);
+    _artist.frame = CGRectMake(40, 173, W - 80, 16);
+    _heart.center = CGPointMake(27, cy); _share.center = CGPointMake(W - 31, cy);
+}
+
+static NSString *CC9Time(NSTimeInterval s) { int v = MAX(0, (int)s); return [NSString stringWithFormat:@"%d:%02d", v / 60, v % 60]; }
+- (void)updateProgress {
+    if (!_hasTrack) return;
+    NSTimeInterval e = _baseElapsed + (_playing ? CFAbsoluteTimeGetCurrent() - _baseTime : 0);
+    if (_duration > 0) e = MIN(e, _duration);
+    _elapsed.text = CC9Time(e);
+    _remaining.text = _duration > 0 ? [@"-" stringByAppendingString:CC9Time(_duration - e)] : @"";
+    CGFloat p = _duration > 0 ? e / _duration : 0, tw = _track.bounds.size.width;
+    _tick.frame = CGRectMake(_track.frame.origin.x + p * tw - 1, 136, 2, 14);
+}
+- (void)heartTapped { _heart.selected = !_heart.selected; }
+- (void)noop {}
 
 #pragma mark - Actions
 
@@ -212,11 +256,18 @@ static NSString *CC9Status(CC9Toggle t, BOOL on) {
     if (!_bright.isTracking) _bright.value = b.brightness;
     if (!_vol.isTracking) _vol.value = b.volume;
     __weak typeof(self) ws = self;
-    [b fetchNowPlaying:^(NSString *t, NSString *a, BOOL playing) {
+    [b fetchNowPlaying:^(NSString *t, NSString *a, BOOL playing, NSTimeInterval el, NSTimeInterval du) {
         CC9RootViewController *s = ws; if (!s) return;
-        s->_title.text = t; s->_artist.text = a; s->_playing = playing;
-        [s->_play setImage:CC9Icon(playing ? @"pause.fill" : @"play.fill", 30) forState:UIControlStateNormal];
-        s->_prev.alpha = s->_next.alpha = (t.length ? 1 : 0.4);
+        s->_hasTrack = t.length > 0; s->_title.text = t; s->_artist.text = a; s->_playing = playing;
+        s->_baseElapsed = el; s->_duration = du; s->_baseTime = CFAbsoluteTimeGetCurrent();
+        [s->_play setImage:CC9Icon(playing ? @"pause.fill" : @"play.fill", 22) forState:UIControlStateNormal];
+        s->_prev.alpha = s->_next.alpha = (s->_hasTrack ? 1 : 0.4);
+        [s layoutMedia]; [s updateProgress];
+        if (playing && !s->_progressTimer) {
+            s->_progressTimer = [NSTimer scheduledTimerWithTimeInterval:1 repeats:YES block:^(NSTimer *tm) {
+                CC9RootViewController *x = ws; if (!x) { [tm invalidate]; return; } [x updateProgress];
+            }];
+        }
     }];
 }
 
@@ -329,7 +380,11 @@ static void OnMain(dispatch_block_t b) { if (NSThread.isMainThread) b(); else di
         NSUInteger g = self->_gen;
         [self->_vc animateOpen:NO velocity:0 completion:^(BOOL finished) {
             // une ouverture plus récente (gen différent) annule le masquage ; sinon on cache TOUJOURS la fenêtre
-            if (g == self->_gen && self->_vc.visibleHeight < 1) self->_window.hidden = YES;   // plus aucune interception tactile
+            if (g == self->_gen && self->_vc.visibleHeight < 1) {
+                self->_window.hidden = YES;
+                self->_window.rootViewController = nil;
+                self->_window = nil; self->_vc = nil;
+            }   // plus aucune interception tactile
         }];
     });
 }
