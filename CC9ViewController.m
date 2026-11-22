@@ -41,7 +41,7 @@ static NSString *CC9Status(CC9Toggle t, BOOL on) {
     NSMutableArray<CC9RoundButton *> *_toggles, *_shortcuts;
     CC9Slider *_bright, *_vol; UIButton *_prev, *_play, *_next;
     BOOL _playing, _hasTrack;
-    AVRoutePickerView *_routePicker;
+    AVRoutePickerView *_routePicker; UIButton *_airDropBtn;
     UILabel *_elapsed, *_remaining; UIView *_track, *_tick; UIButton *_heart, *_share;
     NSTimeInterval _baseElapsed, _duration; CFAbsoluteTime _baseTime; NSTimer *_progressTimer;
 }
@@ -151,6 +151,7 @@ static NSString *CC9Status(CC9Toggle t, BOOL on) {
         [hb setImage:CC9Icon((NSString *)hd[0], 17) forState:UIControlStateNormal];
         [hb setTitle:(NSString *)hd[1] forState:UIControlStateNormal];
         hb.titleLabel.font = [UIFont systemFontOfSize:17]; hb.tintColor = adTint;
+        if (i == 0) _airDropBtn = hb;
         [hb addTarget:self action:(i == 0 ? @selector(airDropTapped) : @selector(airPlayTapped)) forControlEvents:UIControlEventTouchUpInside];
         [_content addSubview:hb];
     }
@@ -223,17 +224,20 @@ static NSString *CC9Time(NSTimeInterval s) { int v = MAX(0, (int)s); return [NSS
     CGFloat p = _duration > 0 ? e / _duration : 0, tw = _track.bounds.size.width;
     _tick.frame = CGRectMake(_track.frame.origin.x + p * tw - 1, 150, 2, 15);
 }
-// AirDrop : feuille de choix Off / Contacts Only / Everyone (comme iOS 9)
+// AirDrop : pas de menu — chaque appui change le mode (Off -> Contacts Only -> Everyone -> Off), l'état s'affiche sur 2 lignes
 - (void)airDropTapped {
     NSInteger cur = [[CC9Backend shared] airDropMode];
-    UIAlertController *a = [UIAlertController alertControllerWithTitle:@"AirDrop" message:@"Allow me to be discovered by:" preferredStyle:UIAlertControllerStyleActionSheet];
+    NSInteger next = (cur < 0) ? 2 : (cur + 1) % 3;
+    [[CC9Backend shared] setAirDropMode:next];
+    [self updateAirDropLabelWithMode:next];
+}
+- (void)updateAirDropLabelWithMode:(NSInteger)m {
+    if (!_airDropBtn) return;
+    UILabel *l = _airDropBtn.titleLabel;
+    if (m < 0 || m > 2) { [_airDropBtn setTitle:@"  AirDrop" forState:UIControlStateNormal]; l.font = [UIFont systemFontOfSize:17]; return; }
     NSArray *names = @[@"Off", @"Contacts Only", @"Everyone"];
-    for (NSInteger i = 0; i < 3; i++) {
-        NSString *t = (i == cur) ? [@"✓ " stringByAppendingString:names[i]] : names[i];
-        [a addAction:[UIAlertAction actionWithTitle:t style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) { [[CC9Backend shared] setAirDropMode:i]; }]];
-    }
-    [a addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
-    [self presentViewController:a animated:YES completion:nil];
+    l.numberOfLines = 2; l.textAlignment = NSTextAlignmentLeft; l.font = [UIFont systemFontOfSize:14];
+    [_airDropBtn setTitle:[NSString stringWithFormat:@"  AirDrop:\n  %@", names[m]] forState:UIControlStateNormal];
 }
 
 // AirPlay : on déclenche le sélecteur de sortie système (AVRoutePickerView) via son bouton interne
@@ -289,6 +293,7 @@ static NSString *CC9Time(NSTimeInterval s) { int v = MAX(0, (int)s); return [NSS
 
 - (void)refresh {
     CC9Backend *b = [CC9Backend shared];
+    [self updateAirDropLabelWithMode:[b airDropMode]];
     for (CC9RoundButton *t in _toggles) t.on = [b stateFor:(CC9Toggle)t.tag];
     for (CC9RoundButton *s in _shortcuts) if (s.tag) s.on = [b stateFor:(CC9Toggle)s.tag];
     if (!_bright.isTracking) _bright.value = b.brightness;

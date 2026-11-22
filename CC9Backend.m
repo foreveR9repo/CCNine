@@ -140,55 +140,27 @@ static NSString *const kDNDClient = @"com.apple.donotdisturb.control-center.modu
 - (void)setDND:(BOOL)on {
     Class sc = objc_getClass("DNDModeAssertionService"), dc = objc_getClass("DNDModeAssertionDetails");
     if (!sc || !dc) { CC9Log(@"DND: classes absentes"); return; }
-    if (!_dndService) _dndService = [sc serviceForClientIdentifier:kDNDClient];   // on GARDE le service (et l'assertion)
-    id svc = _dndService; NSError *e = nil;
     if (on) {
+        NSError *e = nil;
+        DNDModeAssertionService *svc = [sc serviceForClientIdentifier:kDNDClient];
+        _dndService = svc;
         id det = [dc userRequestedAssertionDetailsWithIdentifier:@"com.apple.control-center.manual-toggle"
                                                   modeIdentifier:@"com.apple.donotdisturb.mode.default" lifetime:nil];
         _dndAssertion = [svc takeModeAssertionWithDetails:det error:&e];
         _dndFlag = YES;
-        CC9Log([NSString stringWithFormat:@"DND ON  assertion=%@ err=%@", _dndAssertion, e]);
+        CC9Log([NSString stringWithFormat:@"DND ON assertion=%@ err=%@", _dndAssertion, e]);
         return;
     }
-    // OFF : d'abord un service NEUF (comme les tweaks existants), puis 4 stratégies enchaînées
+    // OFF : UNE seule méthode, celle des tweaks existants. Elle renvoie un BOOL : on le lit comme BOOL
+    // (le lire comme "id" faisait retenir la valeur 1 par ARC => crash de SpringBoard => safe mode)
     _dndFlag = NO;
-    {
-        id fresh = [sc serviceForClientIdentifier:kDNDClient]; NSError *fe = nil;
-        SEL all = NSSelectorFromString(@"invalidateAllActiveModeAssertionsWithError:");
-        if ([fresh respondsToSelector:all]) {
-            id r = ((id (*)(id, SEL, NSError **))objc_msgSend)(fresh, all, &fe);
-            CC9Log([NSString stringWithFormat:@"DND OFF 0 (service neuf) invalidateAll -> %@ err=%@", r, fe]);
-        }
-    }
-    SEL sInv = NSSelectorFromString(@"invalidateAssertion:error:");
-    SEL sAll = NSSelectorFromString(@"invalidateAllActiveModeAssertionsWithError:");
-    SEL sAct = NSSelectorFromString(@"activeModeAssertionWithError:");
-    { unsigned n = 0; Method *ms = class_copyMethodList(object_getClass(svc), &n); NSMutableArray *names = [NSMutableArray array];
-      for (unsigned i = 0; i < n; i++) { NSString *nm = NSStringFromSelector(method_getName(ms[i]));
-          if ([nm.lowercaseString containsString:@"invalidate"] || [nm containsString:@"ssertion"]) [names addObject:nm]; }
-      free(ms); CC9Log([NSString stringWithFormat:@"DND methodes du service: %@", names]); }
-    if (_dndAssertion && [svc respondsToSelector:sInv]) {                       // 1) notre propre assertion
-        id r = ((id (*)(id, SEL, id, NSError **))objc_msgSend)(svc, sInv, _dndAssertion, &e);
-        CC9Log([NSString stringWithFormat:@"DND OFF 1 invalidateAssertion -> %@ err=%@", r, e]); e = nil;
-    }
-    if ([svc respondsToSelector:sAll]) {                                        // 2) toutes celles de ce client
-        id r = ((id (*)(id, SEL, NSError **))objc_msgSend)(svc, sAll, &e);
-        CC9Log([NSString stringWithFormat:@"DND OFF 2 invalidateAll -> %@ err=%@", r, e]); e = nil;
-    } else CC9Log(@"DND OFF 2 : invalidateAllActiveModeAssertionsWithError: ABSENT");
-    if ([svc respondsToSelector:sAct] && [svc respondsToSelector:sInv]) {       // 3) l'assertion active, quel que soit son auteur
-        id act = ((id (*)(id, SEL, NSError **))objc_msgSend)(svc, sAct, &e); e = nil;
-        if (act) {
-            id r = ((id (*)(id, SEL, id, NSError **))objc_msgSend)(svc, sInv, act, &e);
-            CC9Log([NSString stringWithFormat:@"DND OFF 3 active=%@ -> %@ err=%@", act, r, e]);
-        } else CC9Log(@"DND OFF 3 : aucune assertion active visible");
-    }
-    SEL sUUID = NSSelectorFromString(@"invalidateAssertionWithUUID:error:");            // 4) par UUID
-    if (_dndAssertion && [svc respondsToSelector:sUUID]) {
-        @try {
-            id uuid = [_dndAssertion valueForKey:@"UUID"];
-            id r = ((id (*)(id, SEL, id, NSError **))objc_msgSend)(svc, sUUID, uuid, &e);
-            CC9Log([NSString stringWithFormat:@"DND OFF 4 invalidateAssertionWithUUID -> %@ err=%@", r, e]); e = nil;
-        } @catch (NSException *x) { CC9Log([NSString stringWithFormat:@"DND OFF 4 exception %@", x]); }
+    SEL all = NSSelectorFromString(@"invalidateAllActiveModeAssertionsWithError:");
+    for (int pass = 0; pass < 2; pass++) {
+        id svc = (pass == 0) ? [sc serviceForClientIdentifier:kDNDClient] : _dndService;   // service neuf, puis celui de l'activation
+        if (!svc || ![svc respondsToSelector:all]) { CC9Log([NSString stringWithFormat:@"DND OFF pass %d: indisponible", pass]); continue; }
+        NSError *err = nil;
+        BOOL ok = ((BOOL (*)(id, SEL, NSError **))objc_msgSend)(svc, all, &err);
+        CC9Log([NSString stringWithFormat:@"DND OFF pass %d ok=%d err=%@", pass, ok, err]);
     }
     _dndAssertion = nil;
 }
