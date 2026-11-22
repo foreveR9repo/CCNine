@@ -111,11 +111,11 @@ UIImage *CC9Icon(NSString *name, CGFloat pt) {
     if ((self = [super initWithFrame:f])) {
         self.minimumTrackTintColor = UIColor.whiteColor;
         self.maximumTrackTintColor = CC9Navy(0.8);
-        UIGraphicsImageRenderer *r = [[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(32, 32)];
+        UIGraphicsImageRenderer *r = [[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(21, 21)];
         UIImage *thumb = [r imageWithActions:^(UIGraphicsImageRendererContext *c) {
             CGContextSetShadowWithColor(c.CGContext, CGSizeMake(0, 1), 2, [UIColor colorWithWhite:0 alpha:.3].CGColor);
             [UIColor.whiteColor setFill];
-            [[UIBezierPath bezierPathWithOvalInRect:CGRectMake(3, 3, 26, 26)] fill];
+            [[UIBezierPath bezierPathWithOvalInRect:CGRectMake(3, 3, 15, 15)] fill];
         }];
         [self setThumbImage:thumb forState:UIControlStateNormal];
         [self setThumbImage:thumb forState:UIControlStateHighlighted];

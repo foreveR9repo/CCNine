@@ -4,7 +4,8 @@
 #import <objc/runtime.h>
 
 static char kBidKey;
-static const CGFloat kPanelH = 386;   // hauteur iOS 9 à 375 pt de large (mesurée par proportion sur tes captures)
+// Cotes ABSOLUES en points, mesurées sur tes captures (capture 1 = iPhone 6s Plus 414 pt @2,007 ; capture 3 = iPhone 6 375 pt @1,056)
+static const CGFloat kPanelH = 427;
 
 static NSString *CC9Status(CC9Toggle t, BOOL on) {
     NSString *o = on ? @"On" : @"Off";
@@ -84,44 +85,44 @@ static NSString *CC9Status(CC9Toggle t, BOOL on) {
     [_panel addGestureRecognizer:pan];
 
     // Bandes sombres (luminosité / AirDrop), cf. captures
-    for (NSValue *v in @[[NSValue valueWithCGRect:CGRectMake(0, 80, W, 42)], [NSValue valueWithCGRect:CGRectMake(0, 250, W, 52)]]) {
+    for (NSValue *v in @[[NSValue valueWithCGRect:CGRectMake(0, 87, W, 47)], [NSValue valueWithCGRect:CGRectMake(0, 283, W, 47)]]) {
         UIView *b = [[UIView alloc] initWithFrame:v.CGRectValue];
         b.backgroundColor = [UIColor colorWithWhite:0 alpha:0.10]; [_content addSubview:b];
     }
 
     // Grabber + libellé d'état
-    _grabber = [[UIImageView alloc] initWithImage:CC9Icon(@"chevron.compact.down", 22)];
-    _grabber.tintColor = [UIColor colorWithWhite:1 alpha:.85]; _grabber.frame = CGRectMake(W/2 - 18, 2, 36, 16);
+    _grabber = [[UIImageView alloc] initWithImage:CC9Icon(@"chevron.compact.down", 30)];
+    _grabber.tintColor = [UIColor colorWithWhite:1 alpha:.85]; _grabber.frame = CGRectMake(W/2 - 20, 3, 40, 16);
     _grabber.contentMode = UIViewContentModeCenter; [_content addSubview:_grabber];
-    _status = [[UILabel alloc] initWithFrame:CGRectMake(0, 2, W, 20)];
+    _status = [[UILabel alloc] initWithFrame:CGRectMake(0, 3.5, W, 20)];
     _status.textAlignment = NSTextAlignmentCenter; _status.textColor = UIColor.whiteColor;
-    _status.font = [UIFont systemFontOfSize:15]; [_content addSubview:_status];
+    _status.font = [UIFont systemFontOfSize:14]; [_content addSubview:_status];
 
     // Ligne de toggles
     _toggles = [NSMutableArray new];
     NSArray *defs = @[@(CC9ToggleAirplane), @(CC9ToggleWiFi), @(CC9ToggleBluetooth), @(CC9ToggleDND), @(CC9ToggleRotation)];
     NSArray *icons = @[@"airplane", @"wifi", @"bluetooth", @"moon.fill", @"lock.rotation"];
-    CGFloat d = 43, m = 29, step = (W - 2*m - d) / 4;
+    CGFloat d = 46, x0 = 50, step = (W - 2*x0) / 4;
     for (int i = 0; i < 5; i++) {
         CC9RoundButton *b = [[CC9RoundButton alloc] initWithSize:d radius:d/2 icon:CC9Icon(icons[i], 19)];
-        b.center = CGPointMake(m + d/2 + step*i, 46); b.tag = [defs[i] integerValue];
+        b.center = CGPointMake(x0 + step*i, 50); b.tag = [defs[i] integerValue];
         [b addTarget:self action:@selector(toggleTapped:) forControlEvents:UIControlEventTouchUpInside];
         [_content addSubview:b]; [_toggles addObject:b];
     }
 
     // Luminosité
-    [self addIcon:@"sun.min.fill" size:13 at:CGPointMake(22, 101)];
-    [self addIcon:@"sun.max.fill" size:18 at:CGPointMake(W - 22, 101)];
-    _bright = [[CC9Slider alloc] initWithFrame:CGRectMake(46, 86, W - 92, 30)];
+    [self addIcon:@"sun.min.fill" size:15 at:CGPointMake(36, 110)];
+    [self addIcon:@"sun.max.fill" size:19 at:CGPointMake(W - 36, 110)];
+    _bright = [[CC9Slider alloc] initWithFrame:CGRectMake(56, 95, W - 111, 30)];
     [_bright addTarget:self action:@selector(brightChanged:) forControlEvents:UIControlEventValueChanged];
     [_content addSubview:_bright];
 
     // Média — tailles mesurées sur tes captures : titre 15 pt, artiste 11 pt, symboles de lecture 22 pt
     UIColor *navy = [UIColor colorWithRed:.05 green:.08 blue:.22 alpha:.85];
-    _title = [self labelSize:15 color:UIColor.whiteColor];
-    _artist = [self labelSize:11 color:navy];
-    _elapsed = [self labelSize:11 color:navy]; _elapsed.textAlignment = NSTextAlignmentLeft;
-    _remaining = [self labelSize:11 color:navy]; _remaining.textAlignment = NSTextAlignmentRight;
+    _title = [self labelSize:16 color:UIColor.whiteColor];
+    _artist = [self labelSize:12 color:navy];
+    _elapsed = [self labelSize:12 color:navy]; _elapsed.textAlignment = NSTextAlignmentLeft;
+    _remaining = [self labelSize:12 color:navy]; _remaining.textAlignment = NSTextAlignmentRight;
     _track = [UIView new]; _track.backgroundColor = [UIColor colorWithRed:.05 green:.08 blue:.22 alpha:.8]; [_content addSubview:_track];
     _tick = [UIView new]; _tick.backgroundColor = UIColor.whiteColor; [_content addSubview:_tick];
     _prev = [self mediaButton:@"backward.fill" size:22 action:@selector(prevTapped)];
@@ -132,9 +133,9 @@ static NSString *CC9Status(CC9Toggle t, BOOL on) {
     _share = [self mediaButton:@"square.and.arrow.up" size:17 action:@selector(noop)];
 
     // Volume
-    [self addIcon:@"speaker.fill" size:13 at:CGPointMake(28, 231)];
-    [self addIcon:@"speaker.wave.3.fill" size:15 at:CGPointMake(W - 28, 231)];
-    _vol = [[CC9Slider alloc] initWithFrame:CGRectMake(52, 216, W - 104, 30)];
+    [self addIcon:@"speaker.fill" size:14 at:CGPointMake(38, 255)];
+    [self addIcon:@"speaker.wave.3.fill" size:16 at:CGPointMake(W - 37, 255)];
+    _vol = [[CC9Slider alloc] initWithFrame:CGRectMake(57, 240, W - 113, 30)];
     [_vol addTarget:self action:@selector(volChanged:) forControlEvents:UIControlEventValueChanged];
     [_content addSubview:_vol];
 
@@ -144,13 +145,13 @@ static NSString *CC9Status(CC9Toggle t, BOOL on) {
     for (int i = 0; i < 2; i++) {
         NSArray *hd = halves[i];
         UIButton *hb = [UIButton buttonWithType:UIButtonTypeSystem];
-        hb.frame = CGRectMake(i * W / 2, 250, W / 2, 52);
+        hb.frame = CGRectMake(i * W / 2, 283, W / 2, 47);
         [hb setImage:CC9Icon((NSString *)hd[0], 17) forState:UIControlStateNormal];
         [hb setTitle:(NSString *)hd[1] forState:UIControlStateNormal];
         hb.titleLabel.font = [UIFont systemFontOfSize:17]; hb.tintColor = adTint;
         [_content addSubview:hb];
     }
-    UIView *sep = [[UIView alloc] initWithFrame:CGRectMake(W / 2 - 0.25, 250, 0.5, 52)];
+    UIView *sep = [[UIView alloc] initWithFrame:CGRectMake(W / 2 - 0.25, 283, 0.5, 47)];
     sep.backgroundColor = [UIColor colorWithWhite:1 alpha:0.3]; [_content addSubview:sep];
 
     // Raccourcis du bas (4 en iOS 9.0-9.2, 5 avec Night Shift en 9.3)
@@ -160,11 +161,11 @@ static NSString *CC9Status(CC9Toggle t, BOOL on) {
                     @[@"camera.fill", @"com.apple.camera"]];
     BOOL nightShift = (objc_getClass("CBBlueLightClient") != nil);
     NSMutableArray *use = [sc mutableCopy]; if (!nightShift) [use removeObjectAtIndex:2];
-    NSUInteger n = use.count; CGFloat sz = (n == 4) ? 54 : 48, mm = 29;
+    NSUInteger n = use.count; CGFloat sz = (n == 4) ? 60 : 47;
     for (NSUInteger i = 0; i < n; i++) {
         NSArray *row = use[i];
-        CC9RoundButton *b = [[CC9RoundButton alloc] initWithSize:sz radius:13 icon:CC9Icon((NSString *)row[0], 21)];
-        b.center = CGPointMake(mm + sz/2 + (W - 2*mm - sz)/(n - 1) * i, 340);
+        CC9RoundButton *b = [[CC9RoundButton alloc] initWithSize:sz radius:13 icon:CC9Icon((NSString *)row[0], round(sz * 0.43))];
+        b.center = (n == 5) ? CGPointMake(50 + (W - 100) / 4 * i, 376) : CGPointMake(58 + (W - 116) / 3 * i, 376);
         id key = row[1];
         b.tag = [key isKindOfClass:NSNumber.class] ? [key integerValue] : 0;
         if (![key isKindOfClass:NSNumber.class]) objc_setAssociatedObject(b, &kBidKey, key, OBJC_ASSOCIATION_COPY_NONATOMIC);
@@ -196,17 +197,17 @@ static NSString *CC9Status(CC9Toggle t, BOOL on) {
 //  avec morceau  (capture 2)   : scrubber 143, titre 162, artiste 181, contrôles 207 (+ ♡ et partager), espacement .285/.5/.706
 - (void)layoutMedia {
     CGFloat W = UIScreen.mainScreen.bounds.size.width; BOOL t = _hasTrack;
-    for (UIView *v in @[_title, _artist, _elapsed, _remaining, _track, _tick, _heart, _share]) { v.transform = CGAffineTransformIdentity; v.hidden = !t; }
-    CGFloat cy = t ? 207 : 188, lx = t ? 0.285 : 0.318, rx = t ? 0.706 : 0.672;
+    for (UIView *x in @[_title, _artist, _elapsed, _remaining, _track, _tick, _heart, _share]) { x.transform = CGAffineTransformIdentity; x.hidden = !t; }
+    CGFloat cy = t ? 227 : 207, sp = t ? 86 : 73;   // espacement mesuré : 73 pt sans morceau (captures 1 et 3), 86 pt avec morceau (capture 2)
     for (UIButton *b in @[_prev, _play, _next, _heart, _share]) { b.transform = CGAffineTransformIdentity; b.bounds = CGRectMake(0, 0, 56, 36); }
-    _prev.center = CGPointMake(W * lx, cy); _play.center = CGPointMake(W * 0.5, cy); _next.center = CGPointMake(W * rx, cy);
+    _prev.center = CGPointMake(W / 2 - sp, cy); _play.center = CGPointMake(W / 2, cy); _next.center = CGPointMake(W / 2 + sp, cy);
     if (!t) return;
-    _elapsed.frame = CGRectMake(25, 135, 44, 16);
-    _remaining.frame = CGRectMake(W - 30 - 54, 135, 54, 16);
-    _track.frame = CGRectMake(60, 142, W - 123, 2);
-    _title.frame = CGRectMake(40, 152, W - 80, 20);
-    _artist.frame = CGRectMake(40, 173, W - 80, 16);
-    _heart.center = CGPointMake(27, cy); _share.center = CGPointMake(W - 31, cy);
+    _elapsed.frame = CGRectMake(27, 149.5, 44, 16);
+    _remaining.frame = CGRectMake(W - 34 - 54, 149.5, 54, 16);
+    _track.frame = CGRectMake(66, 156.5, W - 132, 2);
+    _title.frame = CGRectMake(40, 167, W - 80, 22);
+    _artist.frame = CGRectMake(40, 191, W - 80, 18);
+    _heart.center = CGPointMake(29, cy); _share.center = CGPointMake(W - 30, cy);
 }
 
 static NSString *CC9Time(NSTimeInterval s) { int v = MAX(0, (int)s); return [NSString stringWithFormat:@"%d:%02d", v / 60, v % 60]; }
@@ -217,7 +218,7 @@ static NSString *CC9Time(NSTimeInterval s) { int v = MAX(0, (int)s); return [NSS
     _elapsed.text = CC9Time(e);
     _remaining.text = _duration > 0 ? [@"-" stringByAppendingString:CC9Time(_duration - e)] : @"";
     CGFloat p = _duration > 0 ? e / _duration : 0, tw = _track.bounds.size.width;
-    _tick.frame = CGRectMake(_track.frame.origin.x + p * tw - 1, 136, 2, 14);
+    _tick.frame = CGRectMake(_track.frame.origin.x + p * tw - 1, 150, 2, 15);
 }
 - (void)heartTapped { _heart.selected = !_heart.selected; }
 - (void)noop {}
