@@ -12,9 +12,9 @@ par une reproduction de celui d'**iOS 9**, avec un vrai flou temps réel (`UIVis
 1. Crée un dépôt GitHub et pousse tout ce dossier à la racine (le dossier `.github/` doit être présent).
 2. Onglet **Actions** → workflow **Build CCNine (rootless)** (il se lance au premier push).
 3. Une fois terminé, ouvre l'exécution → section **Artifacts** → télécharge **CCNine-deb**.
-4. Dézippe : tu obtiens `com.example.ccnine_0.1.0_iphoneos-arm64.deb`.
+4. Dézippe : tu obtiens `com.example.ccnine_1.0.0_iphoneos-arm64.deb`.
 
-Pour une Release automatique : `git tag v0.1.0 && git push --tags` (le .deb est attaché à la Release).
+Pour une Release automatique : `git tag v1.0.0 && git push --tags` (le .deb est attaché à la Release).
 
 ## Installer
 
