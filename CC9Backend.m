@@ -35,7 +35,7 @@ static NSString *const kDNDClient = @"com.apple.donotdisturb.control-center.modu
     CBBlueLightClient *_blue;
     MRGetInfoFn _mrInfo; MRSendFn _mrSend;
     BKSGetFn _bksGet; BKSSetFn _bksSet;
-    id _dndService; id _dndAssertion;
+    id _dndService; id _dndAssertion; id _airDrop; BOOL _dndFlag;
 }
 
 + (instancetype)shared {
@@ -84,7 +84,7 @@ static NSString *const kDNDClient = @"com.apple.donotdisturb.control-center.modu
                 id svc = [c serviceForClientIdentifier:@"com.example.ccnine"];
                 NSError *e = nil; id st = [svc queryCurrentStateWithError:&e];
                 BOOL active = st ? [(DNDState *)st isActive] : NO;
-                return active || _dndAssertion != nil;   // si la requête échoue, on se fie à NOTRE assertion
+                return active || _dndFlag;   // la requête d'état n'est pas fiable : on garde notre propre indicateur
             }
             case CC9ToggleFlashlight: {
                 AVCaptureDevice *d = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeVideo];
@@ -146,10 +146,20 @@ static NSString *const kDNDClient = @"com.apple.donotdisturb.control-center.modu
         id det = [dc userRequestedAssertionDetailsWithIdentifier:@"com.apple.control-center.manual-toggle"
                                                   modeIdentifier:@"com.apple.donotdisturb.mode.default" lifetime:nil];
         _dndAssertion = [svc takeModeAssertionWithDetails:det error:&e];
+        _dndFlag = YES;
         CC9Log([NSString stringWithFormat:@"DND ON  assertion=%@ err=%@", _dndAssertion, e]);
         return;
     }
-    // OFF : 3 stratégies enchaînées
+    // OFF : d'abord un service NEUF (comme les tweaks existants), puis 4 stratégies enchaînées
+    _dndFlag = NO;
+    {
+        id fresh = [sc serviceForClientIdentifier:kDNDClient]; NSError *fe = nil;
+        SEL all = NSSelectorFromString(@"invalidateAllActiveModeAssertionsWithError:");
+        if ([fresh respondsToSelector:all]) {
+            id r = ((id (*)(id, SEL, NSError **))objc_msgSend)(fresh, all, &fe);
+            CC9Log([NSString stringWithFormat:@"DND OFF 0 (service neuf) invalidateAll -> %@ err=%@", r, fe]);
+        }
+    }
     SEL sInv = NSSelectorFromString(@"invalidateAssertion:error:");
     SEL sAll = NSSelectorFromString(@"invalidateAllActiveModeAssertionsWithError:");
     SEL sAct = NSSelectorFromString(@"activeModeAssertionWithError:");
@@ -226,8 +236,49 @@ static NSString *const kDNDClient = @"com.apple.donotdisturb.control-center.modu
     });
 }
 
+#pragma mark - AirDrop (Sharing.framework, privé)
+
+- (id)airDropController {
+    if (_airDrop) return _airDrop;
+    dlopen("/System/Library/PrivateFrameworks/Sharing.framework/Sharing", RTLD_LAZY);
+    Class c = objc_getClass("SFAirDropDiscoveryController");
+    if (!c) { CC9Log(@"AirDrop: SFAirDropDiscoveryController ABSENTE"); return nil; }
+    _airDrop = [c new];
+    unsigned n = 0; Method *ms = class_copyMethodList(c, &n); NSMutableArray *names = [NSMutableArray array];
+    for (unsigned i = 0; i < n; i++) { NSString *nm = NSStringFromSelector(method_getName(ms[i])); if ([nm.lowercaseString containsString:@"discoverable"]) [names addObject:nm]; }
+    free(ms); CC9Log([NSString stringWithFormat:@"AirDrop methodes: %@", names]);
+    return _airDrop;
+}
+- (NSInteger)airDropMode {
+    id c = [self airDropController]; SEL s = NSSelectorFromString(@"discoverableMode");
+    return (c && [c respondsToSelector:s]) ? ((NSInteger (*)(id, SEL))objc_msgSend)(c, s) : -1;
+}
+- (void)setAirDropMode:(NSInteger)mode {
+    id c = [self airDropController]; SEL s = NSSelectorFromString(@"setDiscoverableMode:");
+    if (c && [c respondsToSelector:s]) {
+        ((void (*)(id, SEL, NSInteger))objc_msgSend)(c, s, mode);
+        CC9Log([NSString stringWithFormat:@"AirDrop mode -> %ld (relu: %ld)", (long)mode, (long)[self airDropMode]]);
+    } else CC9Log(@"AirDrop: setDiscoverableMode: ABSENT");
+}
+
 - (void)launchBundleID:(NSString *)bid {
-    Class c = objc_getClass("LSApplicationWorkspace");
-    if (c) [[c defaultWorkspace] openApplicationWithBundleID:bid];
+    // LSApplicationWorkspace est SYNCHRONE : depuis SpringBoard il attend... SpringBoard (lent, voire gelé).
+    // FBSSystemService est asynchrone et c'est la voie native de SpringBoard.
+    dlopen("/System/Library/PrivateFrameworks/FrontBoardServices.framework/FrontBoardServices", RTLD_LAZY);
+    Class fbs = objc_getClass("FBSSystemService");
+    SEL shared = NSSelectorFromString(@"sharedService"), open = NSSelectorFromString(@"openApplication:options:withResult:");
+    if (fbs && [fbs respondsToSelector:shared]) {
+        id svc = ((id (*)(Class, SEL))objc_msgSend)(fbs, shared);
+        if ([svc respondsToSelector:open]) {
+            ((void (*)(id, SEL, id, id, id))objc_msgSend)(svc, open, bid, @{}, nil);
+            CC9Log([NSString stringWithFormat:@"launch %@ via FBSSystemService", bid]);
+            return;
+        }
+    }
+    CC9Log([NSString stringWithFormat:@"launch %@ via LaunchServices (secours, thread d'arrière-plan)", bid]);
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        Class c = objc_getClass("LSApplicationWorkspace");
+        if (c) [[c defaultWorkspace] openApplicationWithBundleID:bid];
+    });
 }
 @end

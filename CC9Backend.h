@@ -18,4 +18,6 @@ typedef NS_ENUM(NSInteger, CC9Toggle) {
 - (void)sendMediaCommand:(int)cmd; // 2 = play/pause, 4 = next, 5 = prev
 - (void)fetchNowPlaying:(void (^)(NSString *title, NSString *artist, BOOL playing, NSTimeInterval elapsed, NSTimeInterval duration))cb;
 - (void)launchBundleID:(NSString *)bid;
+- (NSInteger)airDropMode;               // 0 = Off, 1 = Contacts Only, 2 = Everyone, -1 = inconnu
+- (void)setAirDropMode:(NSInteger)mode;
 @end

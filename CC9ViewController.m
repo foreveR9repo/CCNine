@@ -1,6 +1,7 @@
 #import "CC9ViewController.h"
 #import "CC9Backend.h"
 #import "CC9Controls.h"
+#import <AVKit/AVKit.h>
 #import <objc/runtime.h>
 
 static char kBidKey;
@@ -40,6 +41,7 @@ static NSString *CC9Status(CC9Toggle t, BOOL on) {
     NSMutableArray<CC9RoundButton *> *_toggles, *_shortcuts;
     CC9Slider *_bright, *_vol; UIButton *_prev, *_play, *_next;
     BOOL _playing, _hasTrack;
+    AVRoutePickerView *_routePicker;
     UILabel *_elapsed, *_remaining; UIView *_track, *_tick; UIButton *_heart, *_share;
     NSTimeInterval _baseElapsed, _duration; CFAbsoluteTime _baseTime; NSTimer *_progressTimer;
 }
@@ -149,6 +151,7 @@ static NSString *CC9Status(CC9Toggle t, BOOL on) {
         [hb setImage:CC9Icon((NSString *)hd[0], 17) forState:UIControlStateNormal];
         [hb setTitle:(NSString *)hd[1] forState:UIControlStateNormal];
         hb.titleLabel.font = [UIFont systemFontOfSize:17]; hb.tintColor = adTint;
+        [hb addTarget:self action:(i == 0 ? @selector(airDropTapped) : @selector(airPlayTapped)) forControlEvents:UIControlEventTouchUpInside];
         [_content addSubview:hb];
     }
     UIView *sep = [[UIView alloc] initWithFrame:CGRectMake(W / 2 - 0.25, 283, 0.5, 47)];
@@ -220,6 +223,33 @@ static NSString *CC9Time(NSTimeInterval s) { int v = MAX(0, (int)s); return [NSS
     CGFloat p = _duration > 0 ? e / _duration : 0, tw = _track.bounds.size.width;
     _tick.frame = CGRectMake(_track.frame.origin.x + p * tw - 1, 150, 2, 15);
 }
+// AirDrop : feuille de choix Off / Contacts Only / Everyone (comme iOS 9)
+- (void)airDropTapped {
+    NSInteger cur = [[CC9Backend shared] airDropMode];
+    UIAlertController *a = [UIAlertController alertControllerWithTitle:@"AirDrop" message:@"Allow me to be discovered by:" preferredStyle:UIAlertControllerStyleActionSheet];
+    NSArray *names = @[@"Off", @"Contacts Only", @"Everyone"];
+    for (NSInteger i = 0; i < 3; i++) {
+        NSString *t = (i == cur) ? [@"✓ " stringByAppendingString:names[i]] : names[i];
+        [a addAction:[UIAlertAction actionWithTitle:t style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) { [[CC9Backend shared] setAirDropMode:i]; }]];
+    }
+    [a addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:a animated:YES completion:nil];
+}
+
+// AirPlay : on déclenche le sélecteur de sortie système (AVRoutePickerView) via son bouton interne
+- (void)airPlayTapped {
+    if (!_routePicker) {
+        CGFloat W = UIScreen.mainScreen.bounds.size.width;
+        _routePicker = [[AVRoutePickerView alloc] initWithFrame:CGRectMake(W * 0.75 - 22, 306 - 22, 44, 44)];
+        _routePicker.alpha = 0.02; _routePicker.userInteractionEnabled = NO;
+        [_content addSubview:_routePicker]; [_routePicker layoutIfNeeded];
+    }
+    for (UIView *sv in _routePicker.subviews) {
+        if ([sv isKindOfClass:UIButton.class]) { [(UIButton *)sv sendActionsForControlEvents:UIControlEventTouchUpInside]; CC9Log(@"AirPlay: sélecteur déclenché"); return; }
+    }
+    CC9Log(@"AirPlay: bouton AVRoutePickerView introuvable");
+}
+
 - (void)heartTapped { _heart.selected = !_heart.selected; }
 - (void)noop {}
 

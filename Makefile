@@ -9,7 +9,7 @@ include $(THEOS)/makefiles/common.mk
 TWEAK_NAME = CCNine
 CCNine_FILES = Tweak.x CC9Backend.m CC9Controls.m CC9ViewController.m
 CCNine_CFLAGS = -fobjc-arc -Wno-deprecated-declarations -Wno-unused-variable
-CCNine_FRAMEWORKS = UIKit AVFoundation
+CCNine_FRAMEWORKS = UIKit AVFoundation AVKit
 # Tout le privé est chargé via dlopen/objc_getClass : aucun lien privé => pas de crash au chargement
 
 include $(THEOS_MAKE_PATH)/tweak.mk
