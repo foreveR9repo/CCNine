@@ -1,6 +1,6 @@
 Package: com.example.ccnine
 Name: CCNine
-Version: 0.10.0
+Version: 0.10.1
 Architecture: iphoneos-arm
 Description: Control Center d'iOS 9 pour iOS 16-17 (rootless)
 Maintainer: foreveR9
