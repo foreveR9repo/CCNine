@@ -7,6 +7,7 @@
 static char kBidKey;
 // Cotes ABSOLUES en points, mesurées sur tes captures (capture 1 = iPhone 6s Plus 414 pt @2,007 ; capture 3 = iPhone 6 375 pt @1,056)
 static const CGFloat kPanelH = 427;
+static const CGFloat kPanelHLand = 250;   // paysage : panneau bas, pleine largeur, deux colonnes (toggles/luminosité/AirDrop à gauche, média/volume/raccourcis à droite)
 
 static NSString *CC9Status(CC9Toggle t, BOOL on) {
     NSString *o = on ? @"On" : @"Off";
@@ -44,11 +45,12 @@ static NSString *CC9Status(CC9Toggle t, BOOL on) {
     AVRoutePickerView *_routePicker; UIButton *_airDropBtn;
     UILabel *_elapsed, *_remaining; UIView *_track, *_tick; UIButton *_heart, *_share;
     NSTimeInterval _baseElapsed, _duration; CFAbsoluteTime _baseTime; NSTimer *_progressTimer;
+    BOOL _land; CGSize _builtSize; CGFloat _W, _ins, _builtIns; CGPoint _airPlayCenter;
 }
 
 - (BOOL)prefersStatusBarHidden { return NO; }
-- (UIInterfaceOrientationMask)supportedInterfaceOrientations { return UIInterfaceOrientationMaskPortrait; }
-- (CGFloat)panelHeight { return kPanelH + self.view.safeAreaInsets.bottom; }
+- (UIInterfaceOrientationMask)supportedInterfaceOrientations { return UIInterfaceOrientationMaskAllButUpsideDown; }
+- (CGFloat)panelHeight { return (_land ? kPanelHLand : kPanelH) + self.view.safeAreaInsets.bottom; }
 
 - (void)viewDidLoad {
     [super viewDidLoad];
@@ -57,15 +59,41 @@ static NSString *CC9Status(CC9Toggle t, BOOL on) {
     catcher.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     [catcher addTarget:self action:@selector(dismissTapped) forControlEvents:UIControlEventTouchDown];
     [self.view addSubview:catcher];
-    [self buildPanel];
+    [self buildPanelForSize:UIScreen.mainScreen.bounds.size];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(refresh) name:CC9StateChanged object:nil];
 }
 
-- (void)buildPanel {
+// Insets latéraux (encoche) uniquement en paysage
+- (CGFloat)sideInsetForSize:(CGSize)size {
+    return size.width > size.height ? MAX(self.view.safeAreaInsets.left, self.view.safeAreaInsets.right) : 0;
+}
+
+// Reconstruit le panneau quand l'orientation (ou l'encoche) change
+- (void)viewDidLayoutSubviews {
+    [super viewDidLayoutSubviews];
+    CGSize s = self.view.bounds.size;
+    if (s.width < 1 || s.height < 1) return;
+    CGFloat ins = [self sideInsetForSize:s];
+    if (CGSizeEqualToSize(s, _builtSize) && fabs(ins - _builtIns) < 0.5) return;
+    CGFloat oldPH = self.panelHeight, vh = _visibleHeight;
+    BOOL wasOpen = vh >= oldPH - 1;
+    [_panel removeFromSuperview]; _panel = nil; _routePicker = nil;
+    [self buildPanelForSize:s];
+    [self setVisibleHeight:wasOpen ? self.panelHeight : vh];
+    [self refresh];
+}
+
+- (void)buildPanelForSize:(CGSize)size {
     [CC9Backend shared];   // charge CoreBrightness etc. AVANT le test de CBBlueLightClient plus bas
-    CGRect sb = UIScreen.mainScreen.bounds;   // la vue n'est pas encore dimensionnée dans viewDidLoad
-    CGFloat W = sb.size.width, H = sb.size.height;
-    _panel = [[UIView alloc] initWithFrame:CGRectMake(0, H, W, kPanelH)];
+    CGFloat W = size.width, H = size.height;
+    BOOL L = W > H;   // paysage : panneau en bas, pleine largeur
+    _land = L; _builtSize = size; _W = W;
+    CGFloat ins = [self sideInsetForSize:size], UW = W - 2 * ins;
+    _ins = ins; _builtIns = ins;
+    CGFloat (^X)(CGFloat) = ^CGFloat(CGFloat f) { return ins + f * UW; };   // fraction de la largeur utile
+    CGFloat ph = L ? kPanelHLand : kPanelH;
+
+    _panel = [[UIView alloc] initWithFrame:CGRectMake(0, H, W, ph)];
     _panel.clipsToBounds = YES;
     [self.view addSubview:_panel];
 
@@ -86,17 +114,19 @@ static NSString *CC9Status(CC9Toggle t, BOOL on) {
     blue.backgroundColor = [UIColor colorWithRed:.45 green:.65 blue:.95 alpha:0.03];
     [_blur.contentView addSubview:blue];
 
-    _content = [[UIView alloc] initWithFrame:CGRectMake(0, 0, W, kPanelH)];
+    _content = [[UIView alloc] initWithFrame:CGRectMake(0, 0, W, ph)];
     [_blur.contentView addSubview:_content];
 
     UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(panelPan:)];
     pan.delegate = (id<UIGestureRecognizerDelegate>)self;
     [_panel addGestureRecognizer:pan];
 
-    // Bandes sombres (luminosité / AirDrop), cf. captures
-    for (NSValue *v in @[[NSValue valueWithCGRect:CGRectMake(0, 87, W, 47)], [NSValue valueWithCGRect:CGRectMake(0, 283, W, 47)]]) {
-        UIView *b = [[UIView alloc] initWithFrame:v.CGRectValue];
-        b.backgroundColor = [UIColor colorWithWhite:0 alpha:0.10]; [_content addSubview:b];
+    // Bandes sombres (luminosité / AirDrop), cf. captures — portrait uniquement (en paysage : tuiles arrondies)
+    if (!L) {
+        for (NSValue *v in @[[NSValue valueWithCGRect:CGRectMake(0, 87, W, 47)], [NSValue valueWithCGRect:CGRectMake(0, 283, W, 47)]]) {
+            UIView *b = [[UIView alloc] initWithFrame:v.CGRectValue];
+            b.backgroundColor = [UIColor colorWithWhite:0 alpha:0.10]; [_content addSubview:b];
+        }
     }
 
     // Grabber + libellé d'état
@@ -111,18 +141,19 @@ static NSString *CC9Status(CC9Toggle t, BOOL on) {
     _toggles = [NSMutableArray new];
     NSArray *defs = @[@(CC9ToggleAirplane), @(CC9ToggleWiFi), @(CC9ToggleBluetooth), @(CC9ToggleDND), @(CC9ToggleRotation)];
     NSArray *icons = @[@"airplane", @"wifi", @"bluetooth", @"moon.fill", @"lock.rotation"];
-    CGFloat d = 46, x0 = 50, step = (W - 2*x0) / 4;
+    CGFloat d = L ? 44 : 46, x0 = L ? X(0.08) : 50, step = L ? (X(0.433) - X(0.08)) / 4 : (W - 2*x0) / 4, ty = L ? 46 : 50;
     for (int i = 0; i < 5; i++) {
         CC9RoundButton *b = [[CC9RoundButton alloc] initWithSize:d radius:d/2 icon:CC9Icon(icons[i], 19)];
-        b.center = CGPointMake(x0 + step*i, 50); b.tag = [defs[i] integerValue];
+        b.center = CGPointMake(x0 + step*i, ty); b.tag = [defs[i] integerValue];
         [b addTarget:self action:@selector(toggleTapped:) forControlEvents:UIControlEventTouchUpInside];
         [_content addSubview:b]; [_toggles addObject:b];
     }
 
     // Luminosité
-    [self addIcon:@"sun.min.fill" size:15 at:CGPointMake(36, 110)];
-    [self addIcon:@"sun.max.fill" size:19 at:CGPointMake(W - 36, 110)];
-    _bright = [[CC9Slider alloc] initWithFrame:CGRectMake(56, 95, W - 111, 30)];
+    CGFloat by = L ? 134 : 110;
+    [self addIcon:@"sun.min.fill" size:15 at:CGPointMake(L ? X(0.06) : 36, by)];
+    [self addIcon:@"sun.max.fill" size:19 at:CGPointMake(L ? X(0.45) : W - 36, by)];
+    _bright = [[CC9Slider alloc] initWithFrame:L ? CGRectMake(X(0.085), by - 15, 0.345 * UW, 30) : CGRectMake(56, 95, W - 111, 30)];
     [_bright addTarget:self action:@selector(brightChanged:) forControlEvents:UIControlEventValueChanged];
     [_content addSubview:_bright];
 
@@ -142,19 +173,24 @@ static NSString *CC9Status(CC9Toggle t, BOOL on) {
     _share = [self mediaButton:@"square.and.arrow.up" size:17 action:@selector(noop)];
 
     // Volume
-    [self addIcon:@"speaker.fill" size:14 at:CGPointMake(38, 255)];
-    [self addIcon:@"speaker.wave.3.fill" size:16 at:CGPointMake(W - 37, 255)];
-    _vol = [[CC9Slider alloc] initWithFrame:CGRectMake(57, 240, W - 113, 30)];
+    CGFloat vy = L ? 134 : 255;
+    [self addIcon:@"speaker.fill" size:14 at:CGPointMake(L ? X(0.546) : 38, vy)];
+    [self addIcon:@"speaker.wave.3.fill" size:16 at:CGPointMake(L ? X(0.933) : W - 37, vy)];
+    _vol = [[CC9Slider alloc] initWithFrame:L ? CGRectMake(X(0.568), vy - 15, 0.34 * UW, 30) : CGRectMake(57, 240, W - 113, 30)];
     [_vol addTarget:self action:@selector(volChanged:) forControlEvents:UIControlEventValueChanged];
     [_content addSubview:_vol];
 
-    // Ligne AirDrop | AirPlay : deux moitiés séparées par un filet (capture 2), bande plus haute (52 pt)
+    // Ligne AirDrop | AirPlay : portrait = deux moitiés séparées par un filet (capture 2) ; paysage = deux tuiles arrondies
     UIColor *adTint = [UIColor colorWithRed:.05 green:.08 blue:.22 alpha:.8];
     NSArray *halves = @[@[@"dot.radiowaves.left.and.right", @"  AirDrop"], @[@"airplay", @"  AirPlay"]];
+    CGRect fr[2];
+    if (L) { fr[0] = CGRectMake(X(0.042), 168, 0.246 * UW, 56); fr[1] = CGRectMake(X(0.295), 168, 0.174 * UW, 56); }
+    else   { fr[0] = CGRectMake(0, 283, W / 2, 47);            fr[1] = CGRectMake(W / 2, 283, W / 2, 47); }
     for (int i = 0; i < 2; i++) {
         NSArray *hd = halves[i];
         UIButton *hb = [UIButton buttonWithType:UIButtonTypeSystem];
-        hb.frame = CGRectMake(i * W / 2, 283, W / 2, 47);
+        hb.frame = fr[i];
+        if (L) { hb.backgroundColor = [UIColor colorWithWhite:0 alpha:0.10]; hb.layer.cornerRadius = 13; hb.clipsToBounds = YES; }
         [hb setImage:CC9Icon((NSString *)hd[0], 17) forState:UIControlStateNormal];
         [hb setTitle:(NSString *)hd[1] forState:UIControlStateNormal];
         hb.titleLabel.font = [UIFont systemFontOfSize:17]; hb.tintColor = adTint;
@@ -162,8 +198,11 @@ static NSString *CC9Status(CC9Toggle t, BOOL on) {
         [hb addTarget:self action:(i == 0 ? @selector(airDropTapped) : @selector(airPlayTapped)) forControlEvents:UIControlEventTouchUpInside];
         [_content addSubview:hb];
     }
-    UIView *sep = [[UIView alloc] initWithFrame:CGRectMake(W / 2 - 0.25, 283, 0.5, 47)];
-    sep.backgroundColor = [UIColor colorWithWhite:1 alpha:0.3]; [_content addSubview:sep];
+    _airPlayCenter = CGPointMake(CGRectGetMidX(fr[1]), CGRectGetMidY(fr[1]));
+    if (!L) {
+        UIView *sep = [[UIView alloc] initWithFrame:CGRectMake(W / 2 - 0.25, 283, 0.5, 47)];
+        sep.backgroundColor = [UIColor colorWithWhite:1 alpha:0.3]; [_content addSubview:sep];
+    }
 
     // Raccourcis du bas (4 en iOS 9.0-9.2, 5 avec Night Shift en 9.3)
     _shortcuts = [NSMutableArray new];
@@ -172,11 +211,12 @@ static NSString *CC9Status(CC9Toggle t, BOOL on) {
                     @[@"camera.fill", @"com.apple.camera"]];
     BOOL nightShift = (objc_getClass("CBBlueLightClient") != nil);
     NSMutableArray *use = [sc mutableCopy]; if (!nightShift) [use removeObjectAtIndex:2];
-    NSUInteger n = use.count; CGFloat sz = (n == 4) ? 60 : 47;
+    NSUInteger n = use.count; CGFloat bs = L ? ((n == 4) ? 56 : 48) : ((n == 4) ? 60 : 47);
     for (NSUInteger i = 0; i < n; i++) {
         NSArray *row = use[i];
-        CC9RoundButton *b = [[CC9RoundButton alloc] initWithSize:sz radius:13 icon:CC9Icon((NSString *)row[0], round(sz * 0.43))];
-        b.center = (n == 5) ? CGPointMake(50 + (W - 100) / 4 * i, 376) : CGPointMake(58 + (W - 116) / 3 * i, 376);
+        CC9RoundButton *b = [[CC9RoundButton alloc] initWithSize:bs radius:13 icon:CC9Icon((NSString *)row[0], round(bs * 0.43))];
+        if (L) b.center = CGPointMake(X(0.575) + 0.335 * UW / (n - 1) * i, 196);
+        else   b.center = (n == 5) ? CGPointMake(50 + (W - 100) / 4 * i, 376) : CGPointMake(58 + (W - 116) / 3 * i, 376);
         id key = row[1];
         b.tag = [key isKindOfClass:NSNumber.class] ? [key integerValue] : 0;
         if (![key isKindOfClass:NSNumber.class]) objc_setAssociatedObject(b, &kBidKey, key, OBJC_ASSOCIATION_COPY_NONATOMIC);
@@ -207,12 +247,23 @@ static NSString *CC9Status(CC9Toggle t, BOOL on) {
 //  sans morceau  (capture 1/3) : contrôles à y=188, espacement .318/.5/.672
 //  avec morceau  (capture 2)   : scrubber 143, titre 162, artiste 181, contrôles 207 (+ ♡ et partager), espacement .285/.5/.706
 - (void)layoutMedia {
-    CGFloat W = UIScreen.mainScreen.bounds.size.width; BOOL t = _hasTrack;
+    CGFloat W = _W; BOOL t = _hasTrack, L = _land;
+    CGFloat cx = L ? _ins + 0.745 * (W - 2 * _ins) : W / 2;   // paysage : colonne de droite
     for (UIView *x in @[_title, _artist, _elapsed, _remaining, _track, _tick, _heart, _share]) { x.transform = CGAffineTransformIdentity; x.hidden = !t; }
-    CGFloat cy = t ? 227 : 207, sp = t ? 86 : 73;   // espacement mesuré : 73 pt sans morceau (captures 1 et 3), 86 pt avec morceau (capture 2)
+    CGFloat cy = L ? (t ? 102 : 82) : (t ? 227 : 207), sp = (t && !L) ? 86 : 73;   // espacement mesuré : 73 pt sans morceau (captures 1 et 3), 86 pt avec morceau (capture 2)
     for (UIButton *b in @[_prev, _play, _next, _heart, _share]) { b.transform = CGAffineTransformIdentity; b.bounds = CGRectMake(0, 0, 56, 36); }
-    _prev.center = CGPointMake(W / 2 - sp, cy); _play.center = CGPointMake(W / 2, cy); _next.center = CGPointMake(W / 2 + sp, cy);
+    _prev.center = CGPointMake(cx - sp, cy); _play.center = CGPointMake(cx, cy); _next.center = CGPointMake(cx + sp, cy);
     if (!t) return;
+    if (L) {
+        CGFloat hw = 136;
+        _title.frame = CGRectMake(cx - hw, 28, 2 * hw, 22);
+        _artist.frame = CGRectMake(cx - hw, 49, 2 * hw, 18);
+        _elapsed.frame = CGRectMake(cx - hw, 69, 44, 16);
+        _remaining.frame = CGRectMake(cx + hw - 54, 69, 54, 16);
+        _track.frame = CGRectMake(cx - hw + 48, 76, 2 * hw - 102, 2);
+        _heart.center = CGPointMake(cx - 128, cy); _share.center = CGPointMake(cx + 128, cy);
+        return;
+    }
     _elapsed.frame = CGRectMake(27, 149.5, 44, 16);
     _remaining.frame = CGRectMake(W - 34 - 54, 149.5, 54, 16);
     _track.frame = CGRectMake(66, 156.5, W - 132, 2);
@@ -229,7 +280,7 @@ static NSString *CC9Time(NSTimeInterval s) { int v = MAX(0, (int)s); return [NSS
     _elapsed.text = CC9Time(e);
     _remaining.text = _duration > 0 ? [@"-" stringByAppendingString:CC9Time(_duration - e)] : @"";
     CGFloat p = _duration > 0 ? e / _duration : 0, tw = _track.bounds.size.width;
-    _tick.frame = CGRectMake(_track.frame.origin.x + p * tw - 1, 150, 2, 15);
+    _tick.frame = CGRectMake(_track.frame.origin.x + p * tw - 1, _track.frame.origin.y - 6.5, 2, 15);
 }
 // AirDrop : pas de menu — chaque appui change le mode (Off -> Contacts Only -> Everyone -> Off), l'état s'affiche sur 2 lignes
 - (void)airDropTapped {
@@ -250,8 +301,7 @@ static NSString *CC9Time(NSTimeInterval s) { int v = MAX(0, (int)s); return [NSS
 // AirPlay : on déclenche le sélecteur de sortie système (AVRoutePickerView) via son bouton interne
 - (void)airPlayTapped {
     if (!_routePicker) {
-        CGFloat W = UIScreen.mainScreen.bounds.size.width;
-        _routePicker = [[AVRoutePickerView alloc] initWithFrame:CGRectMake(W * 0.75 - 22, 306 - 22, 44, 44)];
+        _routePicker = [[AVRoutePickerView alloc] initWithFrame:CGRectMake(_airPlayCenter.x - 22, _airPlayCenter.y - 22, 44, 44)];
         _routePicker.alpha = 0.02; _routePicker.userInteractionEnabled = NO;
         [_content addSubview:_routePicker]; [_routePicker layoutIfNeeded];
     }
@@ -343,7 +393,8 @@ static NSString *CC9Time(NSTimeInterval s) { int v = MAX(0, (int)s); return [NSS
 #pragma mark - Positionnement
 
 - (void)setVisibleHeight:(CGFloat)h {
-    CGFloat ph = self.panelHeight, W = UIScreen.mainScreen.bounds.size.width, H = UIScreen.mainScreen.bounds.size.height;
+    CGSize vs = self.view.bounds.size; if (vs.width < 1 || vs.height < 1) vs = _builtSize;   // orientation courante de la fenêtre
+    CGFloat ph = self.panelHeight, W = vs.width, H = vs.height;
     if (h > ph) h = ph + (h - ph) * 0.2; // élastique vers le haut
     h = MAX(0, h); _visibleHeight = h;
     _panel.frame = CGRectMake(0, H - h, W, MAX(h, ph));   // on anime la position, jamais l'alpha de l'effect view
@@ -374,8 +425,7 @@ static const CGFloat kTrigHeight = 34;        // hauteur de la zone (≈ zone de
 @interface CC9TriggerWindow : UIWindow @end
 @implementation CC9TriggerWindow
 - (BOOL)pointInside:(CGPoint)p withEvent:(UIEvent *)e {
-    if (UIDeviceOrientationIsLandscape(UIDevice.currentDevice.orientation)) return NO;   // le CC9 est portrait uniquement
-    CGSize s = UIScreen.mainScreen.bounds.size;
+    CGSize s = self.bounds.size;   // suit l'orientation (portrait ET paysage)
     return p.x >= 0 && p.x <= s.width * kTrigWidthFrac && p.y >= s.height - kTrigHeight && p.y <= s.height;
 }
 - (UIView *)hitTest:(CGPoint)p withEvent:(UIEvent *)e { return [self pointInside:p withEvent:e] ? [super hitTest:p withEvent:e] : nil; }
@@ -397,7 +447,7 @@ static const CGFloat kTrigHeight = 34;        // hauteur de la zone (≈ zone de
     for (UIScene *s in UIApplication.sharedApplication.connectedScenes)
         if ([s isKindOfClass:UIWindowScene.class]) { scene = (UIWindowScene *)s; break; }
     _window = scene ? [[CC9Window alloc] initWithWindowScene:scene] : [[CC9Window alloc] initWithFrame:UIScreen.mainScreen.bounds];
-    _window.frame = UIScreen.mainScreen.bounds;
+    [self syncWindowFrame];
     _window.windowLevel = UIWindowLevelAlert + 1000;   // au-dessus du cover sheet : À VÉRIFIER iOS 16/17
     _window.backgroundColor = UIColor.clearColor;
     _vc = [CC9RootViewController new];
@@ -406,6 +456,13 @@ static const CGFloat kTrigHeight = 34;        // hauteur de la zone (≈ zone de
     _window.rootViewController = _vc;
     _window.hidden = YES;
     CC9Log([NSString stringWithFormat:@"fenetre CC9 creee scene=%d level=%.0f", scene != nil, _window.windowLevel]);
+}
+
+// La fenêtre doit toujours épouser l'orientation courante de la scène (sinon le panneau reste calé sur le portrait)
+- (void)syncWindowFrame {
+    if (!_window) return;
+    CGRect r = _window.windowScene ? _window.windowScene.coordinateSpace.bounds : UIScreen.mainScreen.bounds;
+    if (!CGRectEqualToRect(_window.frame, r)) _window.frame = r;
 }
 
 static void OnMain(dispatch_block_t b) { if (NSThread.isMainThread) b(); else dispatch_async(dispatch_get_main_queue(), b); }
@@ -460,7 +517,7 @@ static void OnMain(dispatch_block_t b) { if (NSThread.isMainThread) b(); else di
     OnMain(^{
         @try {
             self->_gen++; CC9Log(@"gestureBegan");
-            [self ensureWindow]; self->_window.hidden = NO;
+            [self ensureWindow]; self->_window.hidden = NO; [self syncWindowFrame];
             [self->_vc.view layoutIfNeeded];
             [self->_vc setVisibleHeight:0]; [self->_vc refresh];
         } @catch (NSException *e) { NSLog(@"[CCNine] began: %@", e); }
@@ -470,7 +527,7 @@ static void OnMain(dispatch_block_t b) { if (NSThread.isMainThread) b(); else di
     OnMain(^{
         if (!self->_vc) return;
         CGFloat y = [self yOf:gr]; if (y < 0) return;
-        [self->_vc setVisibleHeight:UIScreen.mainScreen.bounds.size.height - y];
+        [self->_vc setVisibleHeight:self->_window.bounds.size.height - y];
     });
 }
 - (void)gestureEnded:(id)gr {
@@ -487,7 +544,7 @@ static void OnMain(dispatch_block_t b) { if (NSThread.isMainThread) b(); else di
     OnMain(^{
         if (self.isOpen) return;
         self->_gen++; CC9Log(@"present");
-        [self ensureWindow]; self->_window.hidden = NO; [self->_vc.view layoutIfNeeded];
+        [self ensureWindow]; self->_window.hidden = NO; [self syncWindowFrame]; [self->_vc.view layoutIfNeeded];
         [self->_vc setVisibleHeight:0]; [self->_vc refresh];
         [self->_vc animateOpen:YES velocity:0 completion:nil];
     });
