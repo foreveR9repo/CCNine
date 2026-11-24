@@ -3,6 +3,7 @@
 #import "CC9Controls.h"
 #import <AVKit/AVKit.h>
 #import <objc/runtime.h>
+#import <objc/message.h>
 
 static char kBidKey;
 // Cotes ABSOLUES en points, mesurées sur tes captures (capture 1 = iPhone 6s Plus 414 pt @2,007 ; capture 3 = iPhone 6 375 pt @1,056)
@@ -31,6 +32,8 @@ static NSString *CC9Status(CC9Toggle t, BOOL on) {
 @property (nonatomic, readonly) CGFloat visibleHeight;
 @property (nonatomic, readonly) CGFloat panelHeight;
 @property (nonatomic, copy) void (^requestDismiss)(void);
+@property (nonatomic, readonly) BOOL landscape;
+- (void)updateOrientation;
 - (void)setVisibleHeight:(CGFloat)h;
 - (void)animateOpen:(BOOL)open velocity:(CGFloat)v completion:(void (^)(BOOL finished))c;
 - (void)refresh;
@@ -46,11 +49,13 @@ static NSString *CC9Status(CC9Toggle t, BOOL on) {
     UILabel *_elapsed, *_remaining; UIView *_track, *_tick; UIButton *_heart, *_share;
     NSTimeInterval _baseElapsed, _duration; CFAbsoluteTime _baseTime; NSTimer *_progressTimer;
     BOOL _land; CGSize _builtSize; CGFloat _W, _ins, _builtIns; CGPoint _airPlayCenter;
+    UIView *_rotor; CGFloat _wantAngle; NSInteger _dbgIO, _dbgDev; NSString *_dbgLast;   // conteneur qu'on fait pivoter NOUS-MÊMES (SpringBoard ne fait pas tourner une fenêtre perso)
 }
 
 - (BOOL)prefersStatusBarHidden { return NO; }
 - (UIInterfaceOrientationMask)supportedInterfaceOrientations { return UIInterfaceOrientationMaskAllButUpsideDown; }
-- (CGFloat)panelHeight { return (_land ? kPanelHLand : kPanelH) + self.view.safeAreaInsets.bottom; }
+- (CGFloat)panelHeight { return (_land ? kPanelHLand : kPanelH) + _rotor.safeAreaInsets.bottom; }
+- (BOOL)landscape { return _land; }
 
 - (void)viewDidLoad {
     [super viewDidLoad];
@@ -59,29 +64,75 @@ static NSString *CC9Status(CC9Toggle t, BOOL on) {
     catcher.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     [catcher addTarget:self action:@selector(dismissTapped) forControlEvents:UIControlEventTouchDown];
     [self.view addSubview:catcher];
+    _rotor = [[UIView alloc] initWithFrame:self.view.bounds];
+    _rotor.backgroundColor = UIColor.clearColor;
+    [self.view addSubview:_rotor];
+    [UIDevice.currentDevice beginGeneratingDeviceOrientationNotifications];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(orientationChanged) name:UIDeviceOrientationDidChangeNotification object:nil];
     [self buildPanelForSize:UIScreen.mainScreen.bounds.size];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(refresh) name:CC9StateChanged object:nil];
 }
 
 // Insets latéraux (encoche) uniquement en paysage
 - (CGFloat)sideInsetForSize:(CGSize)size {
-    return size.width > size.height ? MAX(self.view.safeAreaInsets.left, self.view.safeAreaInsets.right) : 0;
+    return size.width > size.height ? MAX(_rotor.safeAreaInsets.left, _rotor.safeAreaInsets.right) : 0;
 }
 
-// Reconstruit le panneau quand l'orientation (ou l'encoche) change
-- (void)viewDidLayoutSubviews {
-    [super viewDidLayoutSubviews];
-    CGSize s = self.view.bounds.size;
-    if (s.width < 1 || s.height < 1) return;
-    CGFloat ins = [self sideInsetForSize:s];
-    if (CGSizeEqualToSize(s, _builtSize) && fabs(ins - _builtIns) < 0.5) return;
+// Angle voulu : DÈS QU'UNE source dit « paysage » (app au premier plan OU appareil), on passe en paysage.
+// (avant, une source qui répondait « portrait » écrasait les autres => le panneau restait en portrait)
+// À plat / indéterminé : on garde le dernier angle.
+- (void)pickAngle {
+    UIApplication *app = UIApplication.sharedApplication;
+    NSInteger io = 0;
+    for (NSString *n in @[@"activeInterfaceOrientation", @"_frontMostAppOrientation", @"_currentInterfaceOrientation"]) {
+        SEL sel = NSSelectorFromString(n);
+        if (![app respondsToSelector:sel]) continue;
+        NSInteger v = ((NSInteger (*)(id, SEL))objc_msgSend)(app, sel);
+        if (v == UIInterfaceOrientationLandscapeLeft || v == UIInterfaceOrientationLandscapeRight) { io = v; break; }
+    }
+    UIDeviceOrientation o = UIDevice.currentDevice.orientation;
+    if (io == UIInterfaceOrientationLandscapeRight) _wantAngle = M_PI_2;          // bouton Home à droite
+    else if (io == UIInterfaceOrientationLandscapeLeft) _wantAngle = -M_PI_2;     // bouton Home à gauche
+    else if (o == UIDeviceOrientationLandscapeLeft) _wantAngle = M_PI_2;
+    else if (o == UIDeviceOrientationLandscapeRight) _wantAngle = -M_PI_2;
+    else if (o == UIDeviceOrientationPortrait) _wantAngle = 0;
+    _dbgIO = io; _dbgDev = o;
+}
+
+// Place le conteneur par rapport à l'écran PHYSIQUE (espace de coordonnées fixe, toujours portrait) :
+// ça marche que la fenêtre soit tournée par le système ou non.
+- (void)updateOrientation {
+    UIView *v = self.view;
+    if (!_rotor || !v.window || v.bounds.size.width < 1) return;
+    [self pickAngle];
+    id<UICoordinateSpace> fx = UIScreen.mainScreen.fixedCoordinateSpace;
+    CGRect fb = fx.bounds;
+    CGPoint p0 = [fx convertPoint:CGPointZero fromCoordinateSpace:v];
+    CGPoint p1 = [fx convertPoint:CGPointMake(1, 0) fromCoordinateSpace:v];
+    CGFloat viewAngle = atan2(p1.y - p0.y, p1.x - p0.x);   // rotation actuelle de la vue par rapport au portrait fixe
+    CGPoint c = [v convertPoint:CGPointMake(CGRectGetMidX(fb), CGRectGetMidY(fb)) fromCoordinateSpace:fx];
+    BOOL land = fabs(_wantAngle) > 0.1;
+    CGSize rs = land ? CGSizeMake(fb.size.height, fb.size.width) : fb.size;
+    _rotor.transform = CGAffineTransformIdentity;
+    _rotor.bounds = CGRectMake(0, 0, rs.width, rs.height);
+    _rotor.center = c;
+    _rotor.transform = CGAffineTransformMakeRotation(_wantAngle - viewAngle);
+    [_rotor layoutIfNeeded];
+    NSString *dbg = [NSString stringWithFormat:@"orient: appIO=%ld dev=%ld want=%.2f viewAngle=%.2f win=%@ rotor=%@ c=%@", (long)_dbgIO, (long)_dbgDev, _wantAngle, viewAngle,
+                     NSStringFromCGRect(v.window.frame), NSStringFromCGSize(rs), NSStringFromCGPoint(c)];
+    if (![dbg isEqualToString:_dbgLast]) { _dbgLast = dbg; CC9Log(dbg); }
+
+    CGFloat ins = [self sideInsetForSize:rs];
+    if (CGSizeEqualToSize(rs, _builtSize) && fabs(ins - _builtIns) < 0.5) return;
     CGFloat oldPH = self.panelHeight, vh = _visibleHeight;
     BOOL wasOpen = vh >= oldPH - 1;
     [_panel removeFromSuperview]; _panel = nil; _routePicker = nil;
-    [self buildPanelForSize:s];
+    [self buildPanelForSize:rs];
     [self setVisibleHeight:wasOpen ? self.panelHeight : vh];
     [self refresh];
 }
+- (void)orientationChanged { if (self.isViewLoaded && self.view.window && !self.view.window.hidden) [self updateOrientation]; }
+- (void)viewDidLayoutSubviews { [super viewDidLayoutSubviews]; [self updateOrientation]; }
 
 - (void)buildPanelForSize:(CGSize)size {
     [CC9Backend shared];   // charge CoreBrightness etc. AVANT le test de CBBlueLightClient plus bas
@@ -95,7 +146,7 @@ static NSString *CC9Status(CC9Toggle t, BOOL on) {
 
     _panel = [[UIView alloc] initWithFrame:CGRectMake(0, H, W, ph)];
     _panel.clipsToBounds = YES;
-    [self.view addSubview:_panel];
+    [_rotor addSubview:_panel];
 
     // VRAI flou temps réel de ce qui est derrière la fenêtre (pas d'image statique)
     // Flou plein (même étalement qu'avant), simplement blanchi comme le CC iOS 9.
@@ -378,11 +429,11 @@ static NSString *CC9Time(NSTimeInterval s) { int v = MAX(0, (int)s); return [NSS
     return fabs(v.y) > fabs(v.x) * 1.5 && v.y > 0; // uniquement vers le bas
 }
 - (void)panelPan:(UIPanGestureRecognizer *)g {
-    CGFloat dy = [g translationInView:self.view].y;
+    CGFloat dy = [g translationInView:_rotor].y;
     switch (g.state) {
         case UIGestureRecognizerStateChanged: [self setVisibleHeight:self.panelHeight - MAX(0, dy)]; break;
         case UIGestureRecognizerStateEnded: case UIGestureRecognizerStateCancelled: {
-            CGFloat vy = [g velocityInView:self.view].y;
+            CGFloat vy = [g velocityInView:_rotor].y;
             BOOL close = vy > 300 || _visibleHeight < self.panelHeight * 0.6;
             if (close && self.requestDismiss) self.requestDismiss(); else [self animateOpen:YES velocity:vy completion:nil];
         } break;
@@ -393,7 +444,7 @@ static NSString *CC9Time(NSTimeInterval s) { int v = MAX(0, (int)s); return [NSS
 #pragma mark - Positionnement
 
 - (void)setVisibleHeight:(CGFloat)h {
-    CGSize vs = self.view.bounds.size; if (vs.width < 1 || vs.height < 1) vs = _builtSize;   // orientation courante de la fenêtre
+    CGSize vs = _rotor.bounds.size; if (vs.width < 1 || vs.height < 1) vs = _builtSize;   // géométrie du conteneur (pivoté en paysage)
     CGFloat ph = self.panelHeight, W = vs.width, H = vs.height;
     if (h > ph) h = ph + (h - ph) * 0.2; // élastique vers le haut
     h = MAX(0, h); _visibleHeight = h;
@@ -425,7 +476,8 @@ static const CGFloat kTrigHeight = 34;        // hauteur de la zone (≈ zone de
 @interface CC9TriggerWindow : UIWindow @end
 @implementation CC9TriggerWindow
 - (BOOL)pointInside:(CGPoint)p withEvent:(UIEvent *)e {
-    CGSize s = self.bounds.size;   // suit l'orientation (portrait ET paysage)
+    if (UIDeviceOrientationIsLandscape(UIDevice.currentDevice.orientation)) return NO;   // zone de glissement : portrait seulement
+    CGSize s = UIScreen.mainScreen.bounds.size;
     return p.x >= 0 && p.x <= s.width * kTrigWidthFrac && p.y >= s.height - kTrigHeight && p.y <= s.height;
 }
 - (UIView *)hitTest:(CGPoint)p withEvent:(UIEvent *)e { return [self pointInside:p withEvent:e] ? [super hitTest:p withEvent:e] : nil; }
@@ -435,6 +487,7 @@ static const CGFloat kTrigHeight = 34;        // hauteur de la zone (≈ zone de
 
 @implementation CC9Controller {
     CC9Window *_window; CC9RootViewController *_vc; CC9TriggerWindow *_trigger;
+    BOOL _ignoreGesture;   // paysage : pas de suivi du doigt (repères du geste natif différents), ouverture directe
     NSUInteger _gen;   // change à chaque (ré)ouverture : une ancienne fermeture ne peut plus cacher la fenêtre
 }
 + (instancetype)shared { static CC9Controller *s; static dispatch_once_t o; dispatch_once(&o, ^{ s = [CC9Controller new]; }); return s; }
@@ -447,7 +500,7 @@ static const CGFloat kTrigHeight = 34;        // hauteur de la zone (≈ zone de
     for (UIScene *s in UIApplication.sharedApplication.connectedScenes)
         if ([s isKindOfClass:UIWindowScene.class]) { scene = (UIWindowScene *)s; break; }
     _window = scene ? [[CC9Window alloc] initWithWindowScene:scene] : [[CC9Window alloc] initWithFrame:UIScreen.mainScreen.bounds];
-    [self syncWindowFrame];
+    _window.frame = UIScreen.mainScreen.bounds;
     _window.windowLevel = UIWindowLevelAlert + 1000;   // au-dessus du cover sheet : À VÉRIFIER iOS 16/17
     _window.backgroundColor = UIColor.clearColor;
     _vc = [CC9RootViewController new];
@@ -458,12 +511,8 @@ static const CGFloat kTrigHeight = 34;        // hauteur de la zone (≈ zone de
     CC9Log([NSString stringWithFormat:@"fenetre CC9 creee scene=%d level=%.0f", scene != nil, _window.windowLevel]);
 }
 
-// La fenêtre doit toujours épouser l'orientation courante de la scène (sinon le panneau reste calé sur le portrait)
-- (void)syncWindowFrame {
-    if (!_window) return;
-    CGRect r = _window.windowScene ? _window.windowScene.coordinateSpace.bounds : UIScreen.mainScreen.bounds;
-    if (!CGRectEqualToRect(_window.frame, r)) _window.frame = r;
-}
+// Remet le conteneur d'aplomb par rapport à l'écran physique avant chaque affichage
+- (void)syncWindowFrame { [_vc updateOrientation]; }
 
 static void OnMain(dispatch_block_t b) { if (NSThread.isMainThread) b(); else dispatch_async(dispatch_get_main_queue(), b); }
 
@@ -517,36 +566,39 @@ static void OnMain(dispatch_block_t b) { if (NSThread.isMainThread) b(); else di
     OnMain(^{
         @try {
             self->_gen++; CC9Log(@"gestureBegan");
-            [self ensureWindow]; self->_window.hidden = NO; [self syncWindowFrame];
-            [self->_vc.view layoutIfNeeded];
+            [self ensureWindow]; self->_window.hidden = NO; [self->_vc.view layoutIfNeeded]; [self syncWindowFrame];
+            if (self->_vc.landscape) { self->_ignoreGesture = YES; self->_gen--; [self presentAnimated:YES]; return; }
+            self->_ignoreGesture = NO;
             [self->_vc setVisibleHeight:0]; [self->_vc refresh];
         } @catch (NSException *e) { NSLog(@"[CCNine] began: %@", e); }
     });
 }
 - (void)gestureChanged:(id)gr {
     OnMain(^{
-        if (!self->_vc) return;
+        if (!self->_vc || self->_ignoreGesture) return;
         CGFloat y = [self yOf:gr]; if (y < 0) return;
-        [self->_vc setVisibleHeight:self->_window.bounds.size.height - y];
+        [self->_vc setVisibleHeight:UIScreen.mainScreen.bounds.size.height - y];
     });
 }
 - (void)gestureEnded:(id)gr {
     OnMain(^{
         if (!self->_vc) return;
+        if (self->_ignoreGesture) { self->_ignoreGesture = NO; return; }
         CGFloat vy = [self vyOf:gr], ph = self->_vc.panelHeight;
         BOOL open = vy < -250 ? YES : (vy > 250 ? NO : self->_vc.visibleHeight > ph * 0.5);
         open ? [self->_vc animateOpen:YES velocity:vy completion:nil] : [self dismissAnimated:YES];
     });
 }
-- (void)gestureCancelled:(id)gr { [self dismissAnimated:YES]; }
+- (void)gestureCancelled:(id)gr { if (_ignoreGesture) { _ignoreGesture = NO; return; } [self dismissAnimated:YES]; }
 
 - (void)presentAnimated:(BOOL)animated {
     OnMain(^{
         if (self.isOpen) return;
         self->_gen++; CC9Log(@"present");
-        [self ensureWindow]; self->_window.hidden = NO; [self syncWindowFrame]; [self->_vc.view layoutIfNeeded];
+        [self ensureWindow]; self->_window.hidden = NO; [self->_vc.view layoutIfNeeded]; [self syncWindowFrame];
         [self->_vc setVisibleHeight:0]; [self->_vc refresh];
         [self->_vc animateOpen:YES velocity:0 completion:nil];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 120 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{ [self->_vc updateOrientation]; });
     });
 }
 - (void)dismissAnimated:(BOOL)animated {
