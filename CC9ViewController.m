@@ -37,7 +37,6 @@ static NSString *CC9Status(CC9Toggle t, BOOL on) {
 
 @implementation CC9RootViewController {
     UIView *_panel; UIVisualEffectView *_blur; UIView *_content;
-    UIViewPropertyAnimator *_blurAnim;   // sert à régler l'intensité du flou (fractionComplete)
     UILabel *_status, *_title, *_artist; UIImageView *_grabber;
     NSMutableArray<CC9RoundButton *> *_toggles, *_shortcuts;
     CC9Slider *_bright, *_vol; UIButton *_prev, *_play, *_next;
@@ -71,20 +70,12 @@ static NSString *CC9Status(CC9Toggle t, BOOL on) {
     [self.view addSubview:_panel];
 
     // VRAI flou temps réel de ce qui est derrière la fenêtre (pas d'image statique)
-    // Intensité réduite : l'effet part de nil et on fige l'animation à ~35 % (kBlurAmount),
-    // ce qui donne un flou plus léger que le style plein.
-    static const CGFloat kBlurAmount = 0.35;   // 0 = aucun flou, 1 = flou complet
-    static const CGFloat kWhiten    = 0.60;    // voile blanc par-dessus le flou (rendu CC iOS 9 : fond très clair)
-    _blur = [[UIVisualEffectView alloc] initWithEffect:nil];
+    // Flou plein (même étalement qu'avant), simplement blanchi comme le CC iOS 9.
+    static const CGFloat kWhiten = 0.30;   // voile blanc par-dessus le flou
+    _blur = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleExtraLight]];
     _blur.frame = _panel.bounds;
     _blur.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     [_panel addSubview:_blur];
-    UIVisualEffectView *blurRef = _blur;
-    _blurAnim = [[UIViewPropertyAnimator alloc] initWithDuration:1 curve:UIViewAnimationCurveLinear animations:^{
-        blurRef.effect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleExtraLight];
-    }];
-    _blurAnim.pausesOnCompletion = YES;
-    _blurAnim.fractionComplete = kBlurAmount;
 
     UIView *tint = [[UIView alloc] initWithFrame:_blur.bounds];
     tint.autoresizingMask = _blur.autoresizingMask;

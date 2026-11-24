@@ -4,7 +4,7 @@
 
 - Target: iOS 15–17, `arm64` / `arm64e`, rootless jailbreaks (Dopamine, palera1n rootless…) (tested/targeted: iPhone SE 2020)
 - Gesture: swipe up from the bottom edge
-- Code Tested: Everything works since version 0.10.1
+- Code **Tested**: Everything works since version 0.10.1
 
 ## Files
 
