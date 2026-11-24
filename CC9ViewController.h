@@ -1,5 +1,8 @@
 #import <UIKit/UIKit.h>
 
+// YES sur les iPhone sans bouton Home (Face ID / encoche) : le geste natif part alors du coin haut-droit
+BOOL CC9DeviceHasNoHomeButton(void);
+
 @interface CC9Controller : NSObject
 + (instancetype)shared;
 @property (nonatomic, readonly) BOOL isOpen;
@@ -9,6 +12,7 @@
 - (void)gestureEnded:(id)gr;
 - (void)gestureCancelled:(id)gr;
 - (void)prewarm;
+- (void)installEdgeTrigger;   // zone de geste en bas à gauche (appareils sans bouton Home)
 - (void)presentAnimated:(BOOL)animated;
 - (void)dismissAnimated:(BOOL)animated;
 @end

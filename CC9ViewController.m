@@ -349,10 +349,35 @@ static NSString *CC9Time(NSTimeInterval s) { int v = MAX(0, (int)s); return [NSS
 }
 @end
 
+#pragma mark - Zone de déclenchement bas-gauche (iPhone sans bouton Home)
+
+BOOL CC9DeviceHasNoHomeButton(void) {
+    static BOOL r; static dispatch_once_t o;
+    dispatch_once(&o, ^{
+        CGSize s = UIScreen.mainScreen.bounds.size;   // X/11/12/13/14… : plus grand côté >= 812 pt ; SE/6/7/8 (+ Plus) : <= 736 pt
+        r = UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPhone && MAX(s.width, s.height) >= 812;
+    });
+    return r;
+}
+
+static const CGFloat kTrigWidthFrac = 0.33;   // le tiers gauche du bord bas
+static const CGFloat kTrigHeight = 34;        // hauteur de la zone (≈ zone de l'indicateur Home)
+
+// Fenêtre plein écran qui ne capte QUE les touches de la zone bas-gauche : partout ailleurs les touches passent aux fenêtres du dessous
+@interface CC9TriggerWindow : UIWindow @end
+@implementation CC9TriggerWindow
+- (BOOL)pointInside:(CGPoint)p withEvent:(UIEvent *)e {
+    if (UIDeviceOrientationIsLandscape(UIDevice.currentDevice.orientation)) return NO;   // le CC9 est portrait uniquement
+    CGSize s = UIScreen.mainScreen.bounds.size;
+    return p.x >= 0 && p.x <= s.width * kTrigWidthFrac && p.y >= s.height - kTrigHeight && p.y <= s.height;
+}
+- (UIView *)hitTest:(CGPoint)p withEvent:(UIEvent *)e { return [self pointInside:p withEvent:e] ? [super hitTest:p withEvent:e] : nil; }
+@end
+
 #pragma mark - Contrôleur
 
 @implementation CC9Controller {
-    CC9Window *_window; CC9RootViewController *_vc;
+    CC9Window *_window; CC9RootViewController *_vc; CC9TriggerWindow *_trigger;
     NSUInteger _gen;   // change à chaque (ré)ouverture : une ancienne fermeture ne peut plus cacher la fenêtre
 }
 + (instancetype)shared { static CC9Controller *s; static dispatch_once_t o; dispatch_once(&o, ^{ s = [CC9Controller new]; }); return s; }
@@ -379,11 +404,46 @@ static NSString *CC9Time(NSTimeInterval s) { int v = MAX(0, (int)s); return [NSS
 static void OnMain(dispatch_block_t b) { if (NSThread.isMainThread) b(); else dispatch_async(dispatch_get_main_queue(), b); }
 
 - (void)prewarm {   // construit la fenêtre (cachée) à l'avance : la 1re ouverture n'a plus de latence
+    [self installEdgeTrigger];
     OnMain(^{
         if (self->_window) return;
         [self ensureWindow]; [self->_vc loadViewIfNeeded]; [self->_vc.view layoutIfNeeded];
         CC9Log(@"prewarm ok");
     });
+}
+
+- (void)installEdgeTrigger {
+    OnMain(^{
+        if (self->_trigger || !CC9DeviceHasNoHomeButton()) return;
+        [UIDevice.currentDevice beginGeneratingDeviceOrientationNotifications];
+        UIWindowScene *scene = nil;
+        for (UIScene *sc in UIApplication.sharedApplication.connectedScenes)
+            if ([sc isKindOfClass:UIWindowScene.class]) { scene = (UIWindowScene *)sc; break; }
+        CC9TriggerWindow *w = scene ? [[CC9TriggerWindow alloc] initWithWindowScene:scene] : [[CC9TriggerWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
+        w.frame = UIScreen.mainScreen.bounds;
+        w.windowLevel = UIWindowLevelAlert + 900;   // au-dessus des apps, sous la fenêtre du CC9 (Alert + 1000)
+        w.backgroundColor = UIColor.clearColor;
+        UIViewController *vc = [UIViewController new]; vc.view.backgroundColor = UIColor.clearColor;
+        UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(triggerPan:)];
+        pan.maximumNumberOfTouches = 1; pan.delegate = (id<UIGestureRecognizerDelegate>)self;
+        [vc.view addGestureRecognizer:pan];
+        w.rootViewController = vc; w.hidden = NO;
+        self->_trigger = w;
+        CC9Log(@"zone de declenchement bas-gauche installee");
+    });
+}
+- (BOOL)gestureRecognizerShouldBegin:(UIPanGestureRecognizer *)g {   // uniquement un glissement vers le HAUT
+    CGPoint v = [g velocityInView:nil];
+    return v.y < 0 && fabs(v.y) > fabs(v.x) * 1.2;
+}
+- (void)triggerPan:(UIPanGestureRecognizer *)g {
+    switch (g.state) {
+        case UIGestureRecognizerStateBegan:   [self gestureBegan:g]; break;
+        case UIGestureRecognizerStateChanged: [self gestureChanged:g]; break;
+        case UIGestureRecognizerStateEnded:   [self gestureEnded:g]; break;
+        case UIGestureRecognizerStateCancelled: case UIGestureRecognizerStateFailed: [self gestureCancelled:g]; break;
+        default: break;
+    }
 }
 
 - (CGFloat)yOf:(id)gr { return [gr respondsToSelector:@selector(locationInView:)] ? [(UIGestureRecognizer *)gr locationInView:nil].y : -1; }

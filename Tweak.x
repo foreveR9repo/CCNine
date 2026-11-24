@@ -94,6 +94,9 @@ static void CC9NativeAppeared(const char *why) {
 
 static void CC9Route(int kind, id gr) {
     if (kind == 0) CC9Log(@"geste natif intercepte (began)");
+    // Sans bouton Home, le geste natif part du coin HAUT-droit : on ne suit pas le doigt (le calcul se fait depuis le bas),
+    // on ouvre simplement le panneau. Le glissement interactif se fait depuis la zone BAS-gauche (CC9Controller installEdgeTrigger).
+    if (CC9DeviceHasNoHomeButton()) { if (kind == 0) [[CC9Controller shared] presentAnimated:YES]; return; }
     CC9Controller *c = [CC9Controller shared];
     switch (kind) {
         case 0: [c gestureBegan:gr]; break;
@@ -176,7 +179,7 @@ static void CC9WriteDump(void) {
 @interface CCUIModularControlCenterOverlayViewController : UIViewController @end
 @interface SBControlCenterWindow : UIWindow @end
 
-// ---------- Hooks connus (iOS 13-15, souvent encore valides) ----------
+// ---------- Hooks connus (iOS 13-15 : noms d'origine ; iOS 16-17 : le scan dynamique prend le relais) ----------
 %group CCHooks
 %hook SBControlCenterController
 - (void)_showControlCenterGestureBeganWithGestureRecognizer:(id)gr     { CC9Route(0, gr); }
@@ -223,17 +226,18 @@ static void CC9WriteDump(void) {
 %ctor {
     @autoreleasepool {
         if (![NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.apple.springboard"]) return;
-        if (@available(iOS 16.0, *)) {} else return;
+        if (![NSProcessInfo.processInfo isOperatingSystemAtLeastVersion:(NSOperatingSystemVersion){15, 0, 0}]) return;   // iOS 15 minimum
         if (!CC9GuardAllows()) { NSLog(@"[CCNine] desactive (kill-switch / crash-loop guard)"); return; }
         gHooked = [NSMutableArray array];
 
         dlopen("/System/Library/PrivateFrameworks/ControlCenterUI.framework/ControlCenterUI", RTLD_LAZY);
         if (!objc_getClass("SBControlCenterController")) { NSLog(@"[CCNine] SBControlCenterController introuvable"); return; }
 
-        %init(CCHooks);
+        %init(CCHooks);   // aucun %orig dans ce groupe : un sélecteur absent sur iOS 15 est sans danger ; le scan dynamique complète
         CC9HookGestureMethods();
         if (objc_getClass("CCUIModularControlCenterOverlayViewController")) %init(OverlayHooks);
-        if (objc_getClass("SBHomeHardwareButtonActions")) %init(HomeHooks);
+        Class homeCls = objc_getClass("SBHomeHardwareButtonActions");
+        if (homeCls && class_getInstanceMethod(homeCls, @selector(performSinglePressUpActions))) %init(HomeHooks);
 
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 8 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{ [[CC9Controller shared] prewarm]; });
         // Écrit /var/mobile/Documents/CCNine_dump.txt 20 s après le démarrage (preuve que le tweak est chargé)

@@ -1,8 +1,8 @@
 # CCNine
 
-**Rootless** jailbreak tweak (Theos / Logos): replaces the native iOS 16–17 Control Center with a recreation of the **iOS 9** Control Center, featuring real-time blur (`UIVisualEffectView`).
+**Rootless** jailbreak tweak (Theos / Logos): replaces the native iOS 15–17 Control Center with a recreation of the **iOS 9** Control Center, featuring real-time blur (`UIVisualEffectView`).
 
-- Target: iOS 16–17, `arm64` / `arm64e`, Dopamine 3.0 (tested/targeted: iPhone SE 2020)
+- Target: iOS 15–17, `arm64` / `arm64e`, rootless jailbreaks (Dopamine, palera1n rootless…) (tested/targeted: iPhone SE 2020)
 - Gesture: swipe up from the bottom edge
 - Code **Tested**: Everything works since version 0.10.1
 
