@@ -1,11 +1,29 @@
 #import "CC9ViewController.h"
 #import "CC9Backend.h"
 #import "CC9Controls.h"
+#import "CC9Prefs.h"
 #import <AVKit/AVKit.h>
 #import <objc/runtime.h>
 #import <objc/message.h>
 
 static char kBidKey;
+// Niveaux de fenêtre : très haut pour passer AU-DESSUS du cover sheet (écran de verrouillage) ; la zone de geste reste juste dessous
+static const CGFloat kLevelCC = 100000, kLevelTrigger = 99900;
+
+// SpringBoard peut avoir plusieurs UIWindowScene (et connectedScenes est un NSSet : l'ordre est aléatoire).
+// On prend celle de l'écran principal, en privilégiant la scène active — avant, on prenait « la première trouvée ».
+static UIWindowScene *CC9PickScene(void) {
+    UIWindowScene *best = nil; NSInteger bestRank = -1;
+    for (UIScene *s in UIApplication.sharedApplication.connectedScenes) {
+        if (![s isKindOfClass:UIWindowScene.class]) continue;
+        UIWindowScene *ws = (UIWindowScene *)s;
+        NSInteger r = (ws.screen == UIScreen.mainScreen ? 10 : 0);
+        if (s.activationState == UISceneActivationStateForegroundActive) r += 3;
+        else if (s.activationState == UISceneActivationStateForegroundInactive) r += 2;
+        if (r > bestRank) { bestRank = r; best = ws; }
+    }
+    return best;
+}
 // Cotes ABSOLUES en points, mesurées sur tes captures (capture 1 = iPhone 6s Plus 414 pt @2,007 ; capture 3 = iPhone 6 375 pt @1,056)
 static const CGFloat kPanelH = 427;
 static const CGFloat kPanelHLand = 250;   // paysage : panneau bas, pleine largeur, deux colonnes (toggles/luminosité/AirDrop à gauche, média/volume/raccourcis à droite)
@@ -19,6 +37,7 @@ static NSString *CC9Status(CC9Toggle t, BOOL on) {
         case CC9ToggleDND:        return [@"Do Not Disturb: " stringByAppendingString:o];
         case CC9ToggleRotation:   return [@"Portrait Orientation Lock: " stringByAppendingString:o];
         case CC9ToggleNightShift: return on ? @"Night Shift: On Until Sunrise" : @"Night Shift: Off";
+        case CC9ToggleScreenRecord: return on ? @"Screen Recording: Starting…" : @"Screen Recording: Off";
         default: return nil;
     }
 }
@@ -49,6 +68,8 @@ static NSString *CC9Status(CC9Toggle t, BOOL on) {
     UILabel *_elapsed, *_remaining; UIView *_track, *_tick; UIButton *_heart, *_share;
     NSTimeInterval _baseElapsed, _duration; CFAbsoluteTime _baseTime; NSTimer *_progressTimer;
     BOOL _land; CGSize _builtSize; CGFloat _W, _ins, _builtIns; CGPoint _airPlayCenter;
+    BOOL _needsRebuild;                                                  // un réglage a changé : reconstruire le panneau
+    UIView *_scrub; BOOL _scrubbing; CGFloat _scrubFrac; UIPanGestureRecognizer *_scrubPan;   // scrubbing du morceau
     UIView *_rotor; CGFloat _wantAngle; NSInteger _dbgIO, _dbgDev; NSString *_dbgLast;   // conteneur qu'on fait pivoter NOUS-MÊMES (SpringBoard ne fait pas tourner une fenêtre perso)
 }
 
@@ -71,7 +92,11 @@ static NSString *CC9Status(CC9Toggle t, BOOL on) {
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(orientationChanged) name:UIDeviceOrientationDidChangeNotification object:nil];
     [self buildPanelForSize:UIScreen.mainScreen.bounds.size];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(refresh) name:CC9StateChanged object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(prefsChanged) name:CC9PrefsChanged object:nil];
 }
+
+// Réglage modifié dans Réglages > CCNine : on reconstruit le panneau (blanchiment + boutons) immédiatement
+- (void)prefsChanged { _needsRebuild = YES; if (self.isViewLoaded) [self updateOrientation]; }
 
 // Insets latéraux (encoche) uniquement en paysage
 - (CGFloat)sideInsetForSize:(CGSize)size {
@@ -123,7 +148,7 @@ static NSString *CC9Status(CC9Toggle t, BOOL on) {
     if (![dbg isEqualToString:_dbgLast]) { _dbgLast = dbg; CC9Log(dbg); }
 
     CGFloat ins = [self sideInsetForSize:rs];
-    if (CGSizeEqualToSize(rs, _builtSize) && fabs(ins - _builtIns) < 0.5) return;
+    if (!_needsRebuild && CGSizeEqualToSize(rs, _builtSize) && fabs(ins - _builtIns) < 0.5) return;
     CGFloat oldPH = self.panelHeight, vh = _visibleHeight;
     BOOL wasOpen = vh >= oldPH - 1;
     [_panel removeFromSuperview]; _panel = nil; _routePicker = nil;
@@ -138,7 +163,7 @@ static NSString *CC9Status(CC9Toggle t, BOOL on) {
     [CC9Backend shared];   // charge CoreBrightness etc. AVANT le test de CBBlueLightClient plus bas
     CGFloat W = size.width, H = size.height;
     BOOL L = W > H;   // paysage : panneau en bas, pleine largeur
-    _land = L; _builtSize = size; _W = W;
+    _land = L; _builtSize = size; _W = W; _needsRebuild = NO;
     CGFloat ins = [self sideInsetForSize:size], UW = W - 2 * ins;
     _ins = ins; _builtIns = ins;
     CGFloat (^X)(CGFloat) = ^CGFloat(CGFloat f) { return ins + f * UW; };   // fraction de la largeur utile
@@ -150,7 +175,7 @@ static NSString *CC9Status(CC9Toggle t, BOOL on) {
 
     // VRAI flou temps réel de ce qui est derrière la fenêtre (pas d'image statique)
     // Flou plein (même étalement qu'avant), simplement blanchi comme le CC iOS 9.
-    static const CGFloat kWhiten = 0.30;   // voile blanc par-dessus le flou
+    CGFloat kWhiten = CC9PrefWhiten();   // voile blanc par-dessus le flou : réglable dans Réglages > CCNine (défaut 30 %)
     _blur = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleExtraLight]];
     _blur.frame = _panel.bounds;
     _blur.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
@@ -219,6 +244,10 @@ static NSString *CC9Status(CC9Toggle t, BOOL on) {
     _prev = [self mediaButton:@"backward.fill" size:22 action:@selector(prevTapped)];
     _play = [self mediaButton:@"play.fill" size:22 action:@selector(playTapped)];
     _next = [self mediaButton:@"forward.fill" size:22 action:@selector(nextTapped)];
+    _scrub = [UIView new]; _scrub.backgroundColor = UIColor.clearColor; [_content addSubview:_scrub];   // zone tactile élargie autour de la barre
+    _scrubPan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(scrubPanned:)];
+    _scrubPan.delegate = (id<UIGestureRecognizerDelegate>)self; [_scrub addGestureRecognizer:_scrubPan];
+    [_scrub addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(scrubTapped:)]];
     _heart = [self mediaButton:@"heart" size:17 action:@selector(heartTapped)];
     [_heart setImage:CC9Icon(@"heart.fill", 17) forState:UIControlStateSelected];
     _share = [self mediaButton:@"square.and.arrow.up" size:17 action:@selector(noop)];
@@ -257,8 +286,10 @@ static NSString *CC9Status(CC9Toggle t, BOOL on) {
 
     // Raccourcis du bas (4 en iOS 9.0-9.2, 5 avec Night Shift en 9.3)
     _shortcuts = [NSMutableArray new];
+    NSArray *calc = CC9PrefReplaceCalcWithRecord() ? @[@"record.circle", @(CC9ToggleScreenRecord)]   // réglage : enregistrement d'écran à la place
+                                                   : @[@"plus.forwardslash.minus", @"com.apple.calculator"];
     NSArray *sc = @[@[@"flashlight.off.fill", @(CC9ToggleFlashlight)], @[@"timer", @"com.apple.mobiletimer"],
-                    @[@"circle.lefthalf.filled", @(CC9ToggleNightShift)], @[@"plus.forwardslash.minus", @"com.apple.calculator"],
+                    @[@"circle.lefthalf.filled", @(CC9ToggleNightShift)], calc,
                     @[@"camera.fill", @"com.apple.camera"]];
     BOOL nightShift = (objc_getClass("CBBlueLightClient") != nil);
     NSMutableArray *use = [sc mutableCopy]; if (!nightShift) [use removeObjectAtIndex:2];
@@ -300,7 +331,7 @@ static NSString *CC9Status(CC9Toggle t, BOOL on) {
 - (void)layoutMedia {
     CGFloat W = _W; BOOL t = _hasTrack, L = _land;
     CGFloat cx = L ? _ins + 0.745 * (W - 2 * _ins) : W / 2;   // paysage : colonne de droite
-    for (UIView *x in @[_title, _artist, _elapsed, _remaining, _track, _tick, _heart, _share]) { x.transform = CGAffineTransformIdentity; x.hidden = !t; }
+    for (UIView *x in @[_title, _artist, _elapsed, _remaining, _track, _tick, _heart, _share, _scrub]) { x.transform = CGAffineTransformIdentity; x.hidden = !t; }
     CGFloat cy = L ? (t ? 102 : 82) : (t ? 227 : 207), sp = (t && !L) ? 86 : 73;   // espacement mesuré : 73 pt sans morceau (captures 1 et 3), 86 pt avec morceau (capture 2)
     for (UIButton *b in @[_prev, _play, _next, _heart, _share]) { b.transform = CGAffineTransformIdentity; b.bounds = CGRectMake(0, 0, 56, 36); }
     _prev.center = CGPointMake(cx - sp, cy); _play.center = CGPointMake(cx, cy); _next.center = CGPointMake(cx + sp, cy);
@@ -312,12 +343,14 @@ static NSString *CC9Status(CC9Toggle t, BOOL on) {
         _elapsed.frame = CGRectMake(cx - hw, 69, 44, 16);
         _remaining.frame = CGRectMake(cx + hw - 54, 69, 54, 16);
         _track.frame = CGRectMake(cx - hw + 48, 76, 2 * hw - 102, 2);
+        _scrub.frame = CGRectInset(_track.frame, -14, -17);
         _heart.center = CGPointMake(cx - 128, cy); _share.center = CGPointMake(cx + 128, cy);
         return;
     }
     _elapsed.frame = CGRectMake(27, 149.5, 44, 16);
     _remaining.frame = CGRectMake(W - 34 - 54, 149.5, 54, 16);
     _track.frame = CGRectMake(66, 156.5, W - 132, 2);
+    _scrub.frame = CGRectInset(_track.frame, -14, -17);
     _title.frame = CGRectMake(40, 167, W - 80, 22);
     _artist.frame = CGRectMake(40, 191, W - 80, 18);
     _heart.center = CGPointMake(29, cy); _share.center = CGPointMake(W - 30, cy);
@@ -325,7 +358,7 @@ static NSString *CC9Status(CC9Toggle t, BOOL on) {
 
 static NSString *CC9Time(NSTimeInterval s) { int v = MAX(0, (int)s); return [NSString stringWithFormat:@"%d:%02d", v / 60, v % 60]; }
 - (void)updateProgress {
-    if (!_hasTrack) return;
+    if (!_hasTrack || _scrubbing) return;
     NSTimeInterval e = _baseElapsed + (_playing ? CFAbsoluteTimeGetCurrent() - _baseTime : 0);
     if (_duration > 0) e = MIN(e, _duration);
     _elapsed.text = CC9Time(e);
@@ -383,12 +416,68 @@ static NSString *CC9Time(NSTimeInterval s) { int v = MAX(0, (int)s); return [NSS
         BOOL willBeOn = ![[CC9Backend shared] stateFor:t];
         [[CC9Backend shared] toggle:t]; b.on = willBeOn;
         NSString *s = CC9Status(t, willBeOn); if (s) [self showStatus:s];
+        // L'enregistrement ne doit pas filmer notre panneau : on le ferme dès le démarrage (compte à rebours 3-2-1 natif)
+        if (t == CC9ToggleScreenRecord && willBeOn && self.requestDismiss) self.requestDismiss();
     }
 }
 - (void)brightChanged:(UISlider *)s { [[CC9Backend shared] setBrightness:s.value]; }
 - (void)volChanged:(UISlider *)s { [[CC9Backend shared] setVolume:s.value]; }
 - (void)prevTapped { [[CC9Backend shared] sendMediaCommand:5]; }
-- (void)playTapped { [[CC9Backend shared] sendMediaCommand:2]; }
+// Réactivité : on bascule l'icône et la progression TOUT DE SUITE (certaines apps, VLC par ex., mettent plusieurs
+// centaines de ms à répondre), puis on se resynchronise avec l'état réel de l'app.
+- (void)playTapped {
+    if (_hasTrack) {
+        NSTimeInterval e = _baseElapsed + (_playing ? CFAbsoluteTimeGetCurrent() - _baseTime : 0);
+        _baseElapsed = (_duration > 0) ? MIN(e, _duration) : e; _baseTime = CFAbsoluteTimeGetCurrent();
+        _playing = !_playing;
+        [_play setImage:CC9Icon(_playing ? @"pause.fill" : @"play.fill", 22) forState:UIControlStateNormal];
+        [self startProgressTimerIfNeeded];
+    }
+    [[CC9Backend shared] sendMediaCommand:2];
+    for (NSNumber *d in @[@0.35, @1.0]) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(d.doubleValue * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self refresh]; });
+    }
+}
+
+- (void)startProgressTimerIfNeeded {
+    if (!_playing || _progressTimer) return;
+    __weak typeof(self) ws = self;
+    _progressTimer = [NSTimer scheduledTimerWithTimeInterval:1 repeats:YES block:^(NSTimer *tm) {
+        CC9RootViewController *x = ws; if (!x) { [tm invalidate]; return; } [x updateProgress];
+    }];
+}
+
+#pragma mark - Scrubbing
+
+- (CGFloat)fractionForTouch:(UIGestureRecognizer *)g {
+    CGFloat w = _track.frame.size.width; if (w < 1) return 0;
+    return MAX(0, MIN(1, ([g locationInView:_content].x - _track.frame.origin.x) / w));
+}
+- (void)showScrubFraction:(CGFloat)f {
+    NSTimeInterval e = f * _duration;
+    _elapsed.text = CC9Time(e); _remaining.text = [@"-" stringByAppendingString:CC9Time(_duration - e)];
+    _tick.frame = CGRectMake(_track.frame.origin.x + f * _track.bounds.size.width - 1, _track.frame.origin.y - 6.5, 2, 15);
+}
+- (void)commitSeek:(CGFloat)f {
+    NSTimeInterval t = f * _duration;
+    [[CC9Backend shared] seekTo:t];
+    _baseElapsed = t; _baseTime = CFAbsoluteTimeGetCurrent();
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self refresh]; });
+}
+- (void)scrubPanned:(UIPanGestureRecognizer *)g {
+    if (!_hasTrack || _duration <= 0) return;
+    switch (g.state) {
+        case UIGestureRecognizerStateBegan: _scrubbing = YES; // fallthrough
+        case UIGestureRecognizerStateChanged: _scrubFrac = [self fractionForTouch:g]; [self showScrubFraction:_scrubFrac]; break;
+        case UIGestureRecognizerStateEnded: _scrubFrac = [self fractionForTouch:g]; [self commitSeek:_scrubFrac]; _scrubbing = NO; [self updateProgress]; break;
+        case UIGestureRecognizerStateCancelled: case UIGestureRecognizerStateFailed: _scrubbing = NO; [self updateProgress]; break;
+        default: break;
+    }
+}
+- (void)scrubTapped:(UITapGestureRecognizer *)g {
+    if (!_hasTrack || _duration <= 0) return;
+    CGFloat f = [self fractionForTouch:g]; [self showScrubFraction:f]; [self commitSeek:f];
+}
 - (void)nextTapped { [[CC9Backend shared] sendMediaCommand:4]; }
 - (void)dismissTapped { if (self.requestDismiss) self.requestDismiss(); }
 
@@ -409,22 +498,20 @@ static NSString *CC9Time(NSTimeInterval s) { int v = MAX(0, (int)s); return [NSS
     __weak typeof(self) ws = self;
     [b fetchNowPlaying:^(NSString *t, NSString *a, BOOL playing, NSTimeInterval el, NSTimeInterval du) {
         CC9RootViewController *s = ws; if (!s) return;
+        if (s->_scrubbing) return;
         s->_hasTrack = t.length > 0; s->_title.text = t; s->_artist.text = a; s->_playing = playing;
         s->_baseElapsed = el; s->_duration = du; s->_baseTime = CFAbsoluteTimeGetCurrent();
         [s->_play setImage:CC9Icon(playing ? @"pause.fill" : @"play.fill", 22) forState:UIControlStateNormal];
         s->_prev.alpha = s->_next.alpha = (s->_hasTrack ? 1 : 0.4);
         [s layoutMedia]; [s updateProgress];
-        if (playing && !s->_progressTimer) {
-            s->_progressTimer = [NSTimer scheduledTimerWithTimeInterval:1 repeats:YES block:^(NSTimer *tm) {
-                CC9RootViewController *x = ws; if (!x) { [tm invalidate]; return; } [x updateProgress];
-            }];
-        }
+        [s startProgressTimerIfNeeded];
     }];
 }
 
 #pragma mark - Geste vertical sur le panneau (fermeture)
 
 - (BOOL)gestureRecognizerShouldBegin:(UIPanGestureRecognizer *)g {
+    if (g == _scrubPan) { CGPoint sv = [g velocityInView:_scrub]; return fabs(sv.x) >= fabs(sv.y); }   // scrub = glissement horizontal
     CGPoint v = [g velocityInView:_panel];
     return fabs(v.y) > fabs(v.x) * 1.5 && v.y > 0; // uniquement vers le bas
 }
@@ -495,13 +582,14 @@ static const CGFloat kTrigHeight = 34;        // hauteur de la zone (≈ zone de
 - (BOOL)isOpen { return _window && !_window.hidden && _vc.visibleHeight > 0.5; }
 
 - (void)ensureWindow {
-    if (_window) return;
-    UIWindowScene *scene = nil;
-    for (UIScene *s in UIApplication.sharedApplication.connectedScenes)
-        if ([s isKindOfClass:UIWindowScene.class]) { scene = (UIWindowScene *)s; break; }
+    if (_window) {   // fenêtre créée avant que la scène existe (ex. démarrage / écran verrouillé) : on la rattache dès qu'une scène est là
+        if (!_window.windowScene) { UIWindowScene *s = CC9PickScene(); if (s) _window.windowScene = s; }
+        return;
+    }
+    UIWindowScene *scene = CC9PickScene();
     _window = scene ? [[CC9Window alloc] initWithWindowScene:scene] : [[CC9Window alloc] initWithFrame:UIScreen.mainScreen.bounds];
     _window.frame = UIScreen.mainScreen.bounds;
-    _window.windowLevel = UIWindowLevelAlert + 1000;   // au-dessus du cover sheet : À VÉRIFIER iOS 16/17
+    _window.windowLevel = kLevelCC;   // au-dessus du cover sheet (écran de verrouillage)
     _window.backgroundColor = UIColor.clearColor;
     _vc = [CC9RootViewController new];
     __weak typeof(self) ws = self;
@@ -529,12 +617,10 @@ static void OnMain(dispatch_block_t b) { if (NSThread.isMainThread) b(); else di
     OnMain(^{
         if (self->_trigger || !CC9DeviceHasNoHomeButton()) return;
         [UIDevice.currentDevice beginGeneratingDeviceOrientationNotifications];
-        UIWindowScene *scene = nil;
-        for (UIScene *sc in UIApplication.sharedApplication.connectedScenes)
-            if ([sc isKindOfClass:UIWindowScene.class]) { scene = (UIWindowScene *)sc; break; }
+        UIWindowScene *scene = CC9PickScene();
         CC9TriggerWindow *w = scene ? [[CC9TriggerWindow alloc] initWithWindowScene:scene] : [[CC9TriggerWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
         w.frame = UIScreen.mainScreen.bounds;
-        w.windowLevel = UIWindowLevelAlert + 900;   // au-dessus des apps, sous la fenêtre du CC9 (Alert + 1000)
+        w.windowLevel = kLevelTrigger;   // au-dessus des apps, sous la fenêtre du CC9
         w.backgroundColor = UIColor.clearColor;
         UIViewController *vc = [UIViewController new]; vc.view.backgroundColor = UIColor.clearColor;
         UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(triggerPan:)];

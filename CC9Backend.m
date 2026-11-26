@@ -26,6 +26,7 @@ NSString *const CC9StateChanged = @"CC9StateChanged";
 typedef void (*MRGetInfoFn)(dispatch_queue_t, void (^)(CFDictionaryRef));
 typedef Boolean (*MRSendFn)(int, id);
 typedef void (*MRRegisterFn)(dispatch_queue_t);
+typedef void (*MRSeekFn)(double);
 typedef float (*BKSGetFn)(void);
 typedef void (*BKSSetFn)(float, int);
 static NSString *const kDNDClient = @"com.apple.donotdisturb.control-center.module";
@@ -33,7 +34,8 @@ static NSString *const kDNDClient = @"com.apple.donotdisturb.control-center.modu
 @implementation CC9Backend {
     RadiosPreferences *_radios;
     CBBlueLightClient *_blue;
-    MRGetInfoFn _mrInfo; MRSendFn _mrSend;
+    MRGetInfoFn _mrInfo; MRSendFn _mrSend; MRSeekFn _mrSeek;
+    id _recModule; BOOL _recTried; CFAbsoluteTime _recStamp;   // enregistrement d'écran (module ReplayKit du CC natif)
     BKSGetFn _bksGet; BKSSetFn _bksSet;
     id _dndService; id _dndAssertion; id _airDrop; BOOL _dndFlag;
 }
@@ -56,6 +58,7 @@ static NSString *const kDNDClient = @"com.apple.donotdisturb.control-center.modu
         if (mr) {
             _mrInfo = (MRGetInfoFn)dlsym(mr, "MRMediaRemoteGetNowPlayingInfo");
             _mrSend = (MRSendFn)dlsym(mr, "MRMediaRemoteSendCommand");
+            _mrSeek = (MRSeekFn)dlsym(mr, "MRMediaRemoteSetElapsedTime");
             MRRegisterFn reg = (MRRegisterFn)dlsym(mr, "MRMediaRemoteRegisterForNowPlayingNotifications");
             if (reg) {
                 reg(dispatch_get_main_queue());
@@ -89,6 +92,11 @@ static NSString *const kDNDClient = @"com.apple.donotdisturb.control-center.modu
             case CC9ToggleFlashlight: {
                 AVCaptureDevice *d = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeVideo];
                 return d.hasTorch && d.torchMode == AVCaptureTorchModeOn;
+            }
+            case CC9ToggleScreenRecord: {
+                // isCaptured est vrai pendant un enregistrement ; _recStamp couvre le compte à rebours 3-2-1 du démarrage
+                BOOL captured = [UIScreen.mainScreen respondsToSelector:@selector(isCaptured)] && UIScreen.mainScreen.isCaptured;
+                return captured || (_recStamp > 0 && CFAbsoluteTimeGetCurrent() - _recStamp < 4.0);
             }
             case CC9ToggleNightShift: {
                 if (!_blue) { Class c = objc_getClass("CBBlueLightClient"); if (c) _blue = [c new]; }
@@ -130,6 +138,7 @@ static NSString *const kDNDClient = @"com.apple.donotdisturb.control-center.modu
                 break;
             }
             case CC9ToggleNightShift: [_blue setEnabled:on]; break;
+            case CC9ToggleScreenRecord: [self setScreenRecording:on]; break;
         }
     } @catch (NSException *e) { NSLog(@"[CCNine] toggle %ld: %@", (long)t, e); }
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 300 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
@@ -165,6 +174,48 @@ static NSString *const kDNDClient = @"com.apple.donotdisturb.control-center.modu
     _dndAssertion = nil;
 }
 
+#pragma mark - Enregistrement d'écran
+
+// On réutilise le module "Screen Recording" du Control Center natif (ReplayKitModule) : c'est lui qui sait
+// lancer le compte à rebours, démarrer et arrêter l'enregistrement système. Aucun nom de bundle n'est codé en dur :
+// on cherche dans /System/Library/ControlCenter/Bundles un bundle contenant "replaykit" / "screenrecord".
+- (id)recordModule {
+    if (_recModule || _recTried) return _recModule;
+    _recTried = YES;
+    NSFileManager *fm = NSFileManager.defaultManager;
+    NSString *root = @"/System/Library/ControlCenter/Bundles";
+    for (NSString *n in [fm contentsOfDirectoryAtPath:root error:nil]) {
+        NSString *l = n.lowercaseString;
+        if (![l containsString:@"replaykit"] && ![l containsString:@"screenrecord"]) continue;
+        NSBundle *b = [NSBundle bundleWithPath:[root stringByAppendingPathComponent:n]];
+        NSError *err = nil;
+        if (![b loadAndReturnError:&err]) { CC9Log([NSString stringWithFormat:@"SR: chargement %@ échoué: %@", n, err]); continue; }
+        Class c = b.principalClass;
+        if (!c) { CC9Log([NSString stringWithFormat:@"SR: %@ sans principalClass", n]); continue; }
+        id m = [c new];
+        // Diagnostic : méthodes utiles de la classe, pour pouvoir corriger si Apple a changé les noms
+        unsigned cnt = 0; Method *ms = class_copyMethodList(c, &cnt); NSMutableArray *names = [NSMutableArray array];
+        for (unsigned i = 0; i < cnt; i++) {
+            NSString *nm = NSStringFromSelector(method_getName(ms[i])).lowercaseString;
+            if ([nm containsString:@"select"] || [nm containsString:@"record"] || [nm containsString:@"toggle"]) [names addObject:NSStringFromSelector(method_getName(ms[i]))];
+        }
+        free(ms);
+        CC9Log([NSString stringWithFormat:@"SR: bundle=%@ classe=%@ setSelected=%d méthodes=%@", n, NSStringFromClass(c),
+                [m respondsToSelector:@selector(setSelected:)], names]);
+        if (m && [m respondsToSelector:@selector(setSelected:)]) { _recModule = m; break; }
+    }
+    if (!_recModule) CC9Log(@"SR: module d'enregistrement introuvable");
+    return _recModule;
+}
+
+- (void)setScreenRecording:(BOOL)on {
+    id m = [self recordModule];
+    if (!m) return;
+    _recStamp = on ? CFAbsoluteTimeGetCurrent() : 0;
+    ((void (*)(id, SEL, BOOL))objc_msgSend)(m, @selector(setSelected:), on);
+    CC9Log([NSString stringWithFormat:@"SR: setSelected:%d", on]);
+}
+
 #pragma mark - Sliders
 
 - (float)brightness { return _bksGet ? _bksGet() : UIScreen.mainScreen.brightness; }
@@ -193,6 +244,12 @@ static NSString *const kDNDClient = @"com.apple.donotdisturb.control-center.modu
 #pragma mark - Media / Apps
 
 - (void)sendMediaCommand:(int)cmd { if (_mrSend) _mrSend(cmd, nil); }
+
+- (void)seekTo:(NSTimeInterval)t {
+    t = MAX(0, t);
+    if (_mrSeek) { _mrSeek(t); return; }
+    if (_mrSend) _mrSend(24, @{ @"kMRMediaRemoteOptionPlaybackPosition": @(t) });   // 24 = ChangePlaybackPosition (secours)
+}
 
 - (void)fetchNowPlaying:(void (^)(NSString *, NSString *, BOOL, NSTimeInterval, NSTimeInterval))cb {
     if (!_mrInfo) { cb(nil, nil, NO, 0, 0); return; }

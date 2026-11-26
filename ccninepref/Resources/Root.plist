@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>title</key><string>CCNine</string>
+	<key>items</key>
+	<array>
+		<dict>
+			<key>cell</key><string>PSGroupCell</string>
+			<key>label</key><string>Shortcuts</string>
+			<key>footerText</key><string>Replaces the Calculator button in the bottom row with a Screen Recording button. Tapping it closes the panel and starts the recording.</string>
+		</dict>
+		<dict>
+			<key>cell</key><string>PSSwitchCell</string>
+			<key>label</key><string>Screen Recording instead of Calculator</string>
+			<key>defaults</key><string>com.example.ccnine</string>
+			<key>key</key><string>replaceCalcWithRecord</string>
+			<key>default</key><false/>
+			<key>PostNotification</key><string>com.example.ccnine/prefschanged</string>
+		</dict>
+		<dict>
+			<key>cell</key><string>PSGroupCell</string>
+			<key>label</key><string>Appearance</string>
+			<key>footerText</key><string>Whitening level of the panel: white veil laid over the blur. 0% = pure blur, higher = whiter and more opaque. Default: 30%.</string>
+		</dict>
+		<dict>
+			<key>cell</key><string>PSSliderCell</string>
+			<key>defaults</key><string>com.example.ccnine</string>
+			<key>key</key><string>whitenPercent</string>
+			<key>default</key><real>30</real>
+			<key>min</key><real>0</real>
+			<key>max</key><real>90</real>
+			<key>showValue</key><true/>
+			<key>isSegmented</key><false/>
+			<key>PostNotification</key><string>com.example.ccnine/prefschanged</string>
+		</dict>
+		<dict>
+			<key>cell</key><string>PSGroupCell</string>
+		</dict>
+		<dict>
+			<key>cell</key><string>PSButtonCell</string>
+			<key>label</key><string>Reset to defaults</string>
+			<key>action</key><string>resetDefaults</string>
+			<key>isDestructive</key><true/>
+		</dict>
+	</array>
+</dict>
+</plist>

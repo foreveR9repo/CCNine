@@ -4,6 +4,7 @@
 #import <dlfcn.h>
 #import "CC9ViewController.h"
 #import "CC9Backend.h"
+#import "CC9Prefs.h"
 
 // ---------- Garde-fous anti respring-loop ----------
 // 1) kill-switch : crée ce fichier (Filza) pour désactiver le tweak sans recompiler
@@ -88,6 +89,8 @@ static void CC9NativeAppeared(const char *why) {
     dispatch_block_t go = ^{   // immédiat si on est déjà sur le thread principal (moins de délai = moins de flash)
         [[CC9Controller shared] presentAnimated:YES];
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 150 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{ CC9DismissNative(); });
+        // Écran verrouillé : le natif met parfois plus longtemps à s'installer, un seul dismiss à 150 ms pouvait arriver trop tôt
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 600 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{ CC9DismissNative(); });
     };
     if (NSThread.isMainThread) go(); else dispatch_async(dispatch_get_main_queue(), go);
 }
@@ -229,6 +232,7 @@ static void CC9WriteDump(void) {
         if (![NSProcessInfo.processInfo isOperatingSystemAtLeastVersion:(NSOperatingSystemVersion){15, 0, 0}]) return;   // iOS 15 minimum
         if (!CC9GuardAllows()) { NSLog(@"[CCNine] desactive (kill-switch / crash-loop guard)"); return; }
         gHooked = [NSMutableArray array];
+        CC9PrefsStartObserving();
 
         dlopen("/System/Library/PrivateFrameworks/ControlCenterUI.framework/ControlCenterUI", RTLD_LAZY);
         if (!objc_getClass("SBControlCenterController")) { NSLog(@"[CCNine] SBControlCenterController introuvable"); return; }

@@ -4,7 +4,7 @@ void CC9Log(NSString *m);   // journal : /var/mobile/Documents/CCNine_log.txt
 
 typedef NS_ENUM(NSInteger, CC9Toggle) {
     CC9ToggleAirplane = 1, CC9ToggleWiFi, CC9ToggleBluetooth, CC9ToggleDND,
-    CC9ToggleRotation, CC9ToggleFlashlight, CC9ToggleNightShift
+    CC9ToggleRotation, CC9ToggleFlashlight, CC9ToggleNightShift, CC9ToggleScreenRecord
 };
 
 @interface CC9Backend : NSObject
@@ -16,6 +16,7 @@ typedef NS_ENUM(NSInteger, CC9Toggle) {
 - (float)volume;
 - (void)setVolume:(float)v;
 - (void)sendMediaCommand:(int)cmd; // 2 = play/pause, 4 = next, 5 = prev
+- (void)seekTo:(NSTimeInterval)seconds;   // scrubbing : déplace la lecture du morceau en cours
 - (void)fetchNowPlaying:(void (^)(NSString *title, NSString *artist, BOOL playing, NSTimeInterval elapsed, NSTimeInterval duration))cb;
 - (void)launchBundleID:(NSString *)bid;
 - (NSInteger)airDropMode;               // 0 = Off, 1 = Contacts Only, 2 = Everyone, -1 = inconnu
